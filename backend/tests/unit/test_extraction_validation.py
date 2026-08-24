@@ -29,6 +29,7 @@ def test_arithmetic_within_tolerance_keeps_confidence() -> None:
     )
 
     assert result.confidence == Decimal("0.900")
+    assert result.field_flags == {}
 
 
 def test_arithmetic_mismatch_lowers_confidence_but_still_proceeds() -> None:
@@ -41,6 +42,31 @@ def test_arithmetic_mismatch_lowers_confidence_but_still_proceeds() -> None:
     # Soft-flag per TRD §5.4: the row is still fully populated, not rejected.
     assert result.total == Decimal("27.00")
     assert result.subtotal == Decimal("20.00")
+
+
+def test_arithmetic_mismatch_flags_all_three_money_fields() -> None:
+    # Any of the three could be the actual culprit, so all three are flagged
+    # rather than guessing which one is wrong.
+    result = validate_and_normalize(
+        _extraction(subtotal=Decimal("20.00"), tax=Decimal("2.00"), total=Decimal("27.00"))
+    )
+
+    assert result.field_flags == {
+        "subtotal": ["arithmetic_mismatch"],
+        "tax": ["arithmetic_mismatch"],
+        "total": ["arithmetic_mismatch"],
+    }
+
+
+def test_raw_confidence_is_never_lowered_even_when_overall_confidence_is() -> None:
+    result = validate_and_normalize(
+        _extraction(
+            subtotal=Decimal("20.00"), tax=Decimal("2.00"), total=Decimal("27.00"), confidence=0.9
+        )
+    )
+
+    assert result.confidence <= LOW_CONFIDENCE_CAP
+    assert result.raw_confidence == Decimal("0.900")
 
 
 def test_arithmetic_within_rounding_tolerance_is_not_flagged() -> None:
@@ -70,6 +96,8 @@ def test_unparseable_date_is_nulled_not_rejected() -> None:
     result = validate_and_normalize(_extraction(date="14th of March"))
 
     assert result.expense_date is None
+    assert result.field_flags == {"expense_date": ["unparseable_date"]}
+    assert result.confidence <= LOW_CONFIDENCE_CAP
 
 
 def test_missing_date_is_nulled() -> None:
@@ -88,12 +116,16 @@ def test_invalid_currency_defaults_to_aud() -> None:
     result = validate_and_normalize(_extraction(currency="not-a-code"))
 
     assert result.currency == DEFAULT_CURRENCY
+    assert result.field_flags == {"currency": ["invalid_currency"]}
+    assert result.confidence <= LOW_CONFIDENCE_CAP
 
 
 def test_missing_currency_defaults_to_aud() -> None:
+    # Missing isn't invalid — the model just didn't know. Not flagged.
     result = validate_and_normalize(_extraction(currency=None))
 
     assert result.currency == DEFAULT_CURRENCY
+    assert result.field_flags == {}
 
 
 def test_known_category_is_kept() -> None:
@@ -106,12 +138,16 @@ def test_unknown_category_defaults_to_other() -> None:
     result = validate_and_normalize(_extraction(category="Groceries"))
 
     assert result.category == "Other"
+    assert result.field_flags == {"category": ["unknown_category"]}
+    assert result.confidence <= LOW_CONFIDENCE_CAP
 
 
 def test_missing_category_defaults_to_other() -> None:
+    # Missing isn't invalid — the model just didn't know. Not flagged.
     result = validate_and_normalize(_extraction(category=None))
 
     assert result.category == "Other"
+    assert result.field_flags == {}
 
 
 def test_line_items_are_carried_through() -> None:

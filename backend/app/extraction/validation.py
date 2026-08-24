@@ -31,26 +31,43 @@ class ValidatedExpense:
     category: str
     payment_method: str | None
     confidence: Decimal
+    """Overall row-level confidence — lowered if ANY field below was flagged.
+    Drives the `expenses.extracted_confidence` column, which is what a table
+    view uses to flag a whole row for review at a glance."""
+    raw_confidence: Decimal
+    """The model's own self-reported confidence, never lowered. We don't have
+    genuine per-field confidence from the model — only one overall number —
+    so this is what gets stored in every field's provenance entry; the
+    `field_flags` below are the real per-field signal."""
+    field_flags: dict[str, list[str]] = field(default_factory=dict)
     line_items: list[ValidatedLineItem] = field(default_factory=list)
 
 
-def _normalize_date(raw: str | None) -> date_type | None:
+def _normalize_date(raw: str | None) -> tuple[date_type | None, bool]:
+    """Returns (value, was_invalid). A missing date isn't invalid — there was
+    just nothing to parse."""
     if not raw:
-        return None
+        return None, False
     try:
-        return date_type.fromisoformat(raw.strip())
+        return date_type.fromisoformat(raw.strip()), False
     except ValueError:
-        return None
+        return None, True
 
 
-def _normalize_currency(raw: str | None) -> str:
-    if raw and _CURRENCY_RE.match(raw.strip()):
-        return raw.strip().upper()
-    return DEFAULT_CURRENCY
+def _normalize_currency(raw: str | None) -> tuple[str, bool]:
+    if not raw:
+        return DEFAULT_CURRENCY, False
+    if _CURRENCY_RE.match(raw.strip()):
+        return raw.strip().upper(), False
+    return DEFAULT_CURRENCY, True
 
 
-def _normalize_category(raw: str | None) -> str:
-    return raw if raw in CATEGORIES else "Other"
+def _normalize_category(raw: str | None) -> tuple[str, bool]:
+    if not raw:
+        return "Other", False
+    if raw in CATEGORIES:
+        return raw, False
+    return "Other", True
 
 
 def validate_and_normalize(data: ReceiptExtraction) -> ValidatedExpense:
@@ -61,25 +78,53 @@ def validate_and_normalize(data: ReceiptExtraction) -> ValidatedExpense:
     confidence lowered, and the row still proceeds to `ready` for human review
     in Phase 3. Only `is_receipt=false` is a hard rejection, and that's handled
     upstream in the service layer before this function is ever called.
+
+    Each soft issue also records WHICH field(s) tripped it, in field_flags —
+    Phase 3's review UI uses this to highlight precisely rather than dimming
+    the whole row.
     """
-    confidence = Decimal(str(data.confidence)).quantize(Decimal("0.001"))
+    raw_confidence = Decimal(str(data.confidence)).quantize(Decimal("0.001"))
+    confidence = raw_confidence
+    field_flags: dict[str, list[str]] = {}
+
+    def _flag(field_name: str, reason: str) -> None:
+        nonlocal confidence
+        field_flags.setdefault(field_name, []).append(reason)
+        confidence = min(confidence, LOW_CONFIDENCE_CAP)
 
     if data.subtotal is not None and data.tax is not None and data.total is not None:
         expected_total = data.subtotal + data.tax
         if abs(expected_total - data.total) > ARITHMETIC_TOLERANCE:
-            confidence = min(confidence, LOW_CONFIDENCE_CAP)
+            # Any of the three could be the culprit — flag all of them so the
+            # reviewer checks the actual math, not a guessed single field.
+            for f in ("subtotal", "tax", "total"):
+                _flag(f, "arithmetic_mismatch")
+
+    expense_date, date_invalid = _normalize_date(data.date)
+    if date_invalid:
+        _flag("expense_date", "unparseable_date")
+
+    currency, currency_invalid = _normalize_currency(data.currency)
+    if currency_invalid:
+        _flag("currency", "invalid_currency")
+
+    category, category_invalid = _normalize_category(data.category)
+    if category_invalid:
+        _flag("category", "unknown_category")
 
     return ValidatedExpense(
         vendor=data.vendor,
         vendor_tax_id=data.vendor_tax_id,
-        expense_date=_normalize_date(data.date),
+        expense_date=expense_date,
         subtotal=data.subtotal,
         tax=data.tax,
         total=data.total,
-        currency=_normalize_currency(data.currency),
-        category=_normalize_category(data.category),
+        currency=currency,
+        category=category,
         payment_method=data.payment_method,
         confidence=confidence,
+        raw_confidence=raw_confidence,
+        field_flags=field_flags,
         line_items=[
             ValidatedLineItem(
                 description=li.description,

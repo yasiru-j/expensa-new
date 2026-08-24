@@ -1,0 +1,79 @@
+import { api } from "./api";
+
+// Decimal fields (total, subtotal, tax, quantity, unit_price, amount,
+// extracted_confidence) come back as JSON strings, not numbers — Pydantic v2
+// serializes Decimal to string by default to avoid float precision loss.
+
+export type ExpenseStatus = "pending" | "processing" | "ready" | "confirmed" | "failed";
+export type SortOption = "date_desc" | "date_asc" | "created_desc" | "created_asc";
+
+export interface LineItem {
+  id: string;
+  description: string | null;
+  quantity: string | null;
+  unit_price: string | null;
+  amount: string | null;
+}
+
+export interface ExpenseListItem {
+  id: string;
+  vendor: string | null;
+  expense_date: string | null;
+  total: string | null;
+  currency: string | null;
+  category: string | null;
+  status: ExpenseStatus;
+  extracted_confidence: string | null;
+  created_at: string;
+}
+
+export interface ExpenseDetail extends ExpenseListItem {
+  vendor_tax_id: string | null;
+  subtotal: string | null;
+  tax: string | null;
+  payment_method: string | null;
+  updated_at: string;
+  line_items: LineItem[];
+  file_url: string | null;
+}
+
+export interface PaginatedExpenses {
+  items: ExpenseListItem[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface UploadResponse {
+  id: string;
+  status: ExpenseStatus;
+}
+
+export async function uploadExpense(file: File): Promise<UploadResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  // No explicit Content-Type: axios/the browser must generate the multipart
+  // boundary themselves, which a manually-set header would break.
+  const res = await api.post<UploadResponse>("/api/expenses/upload", formData);
+  return res.data;
+}
+
+export async function listExpenses(params: {
+  page?: number;
+  pageSize?: number;
+  sort?: SortOption;
+}): Promise<PaginatedExpenses> {
+  const res = await api.get<PaginatedExpenses>("/api/expenses", {
+    params: {
+      page: params.page ?? 1,
+      page_size: params.pageSize ?? 20,
+      sort: params.sort ?? "date_desc",
+    },
+  });
+  return res.data;
+}
+
+export async function getExpense(id: string): Promise<ExpenseDetail> {
+  const res = await api.get<ExpenseDetail>(`/api/expenses/${id}`);
+  return res.data;
+}

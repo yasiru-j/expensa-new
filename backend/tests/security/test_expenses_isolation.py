@@ -107,6 +107,20 @@ async def test_user_cannot_confirm_another_users_expense(
     assert untouched.status == "ready"
 
 
+async def test_user_cannot_find_another_users_expense_via_search(
+    client: AsyncClient, signup_user, owner_session: AsyncSession
+) -> None:
+    _user_b_id, _expense_id = await _seed_expense(
+        owner_session, "victim-search@example.com", vendor="Corner Cafe"
+    )
+    token_a = await signup_user("attacker-search@example.com")
+
+    resp = await client.get("/api/expenses", params={"q": "corner"}, headers=_auth_headers(token_a))
+
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 0
+
+
 async def test_owner_can_still_reach_their_own_expense(
     client: AsyncClient, signup_user, owner_session: AsyncSession
 ) -> None:

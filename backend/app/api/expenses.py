@@ -1,5 +1,6 @@
 import hashlib
 import uuid
+from datetime import date as date_type
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, status
 from openai import AsyncOpenAI
@@ -21,6 +22,7 @@ from app.extraction.image_prep import (
     sniff_content_type,
 )
 from app.extraction.provenance import apply_user_edits, build_initial_provenance
+from app.extraction.schema import CATEGORIES
 from app.extraction.service import extract_receipt
 from app.extraction.validation import validate_and_normalize
 from app.schemas.expense import (
@@ -39,6 +41,7 @@ settings = get_settings()
 EXTENSION_FOR = {"image/jpeg": "jpg", "image/png": "png", "application/pdf": "pdf"}
 CHUNK_SIZE = 1024 * 1024  # 1 MiB
 STATUS_PATTERN = f"^({'|'.join(STATUSES)})$"
+CATEGORY_PATTERN = f"^({'|'.join(CATEGORIES)})$"
 
 SORT_OPTIONS = {
     "date_desc": Expense.expense_date.desc().nulls_last(),
@@ -46,6 +49,13 @@ SORT_OPTIONS = {
     "created_desc": Expense.created_at.desc(),
     "created_asc": Expense.created_at.asc(),
 }
+
+
+def _escape_like(value: str) -> str:
+    """Escapes LIKE/ILIKE wildcard characters in free-text user input, so a
+    vendor search for e.g. "50% off" doesn't have the % treated as a
+    wildcard."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 async def _read_upload_with_limit(file: UploadFile, max_bytes: int) -> bytes:
@@ -193,6 +203,15 @@ async def list_expenses(
     page_size: int = Query(20, ge=1, le=100),
     sort: str = Query("date_desc", pattern="^(date_desc|date_asc|created_desc|created_asc)$"),
     status_filter: str | None = Query(None, alias="status", pattern=STATUS_PATTERN),
+    date_from: date_type | None = Query(None),
+    date_to: date_type | None = Query(None),
+    category: str | None = Query(None, pattern=CATEGORY_PATTERN),
+    q: str | None = Query(
+        None,
+        min_length=1,
+        max_length=200,
+        description="Case-insensitive, partial-match vendor search",
+    ),
 ) -> PaginatedExpenses:
     # No explicit WHERE user_id filter anywhere in this router: isolation is
     # enforced entirely by Postgres RLS, per the app's whole security model.
@@ -202,11 +221,23 @@ async def list_expenses(
     # dashboard aggregation is expected to pass status=confirmed explicitly —
     # "only confirmed rows count as final" is a query-time choice, not a
     # change to what this endpoint returns by default.
+    conditions = []
+    if status_filter is not None:
+        conditions.append(Expense.status == status_filter)
+    if date_from is not None:
+        conditions.append(Expense.expense_date >= date_from)
+    if date_to is not None:
+        conditions.append(Expense.expense_date <= date_to)
+    if category is not None:
+        conditions.append(Expense.category == category)
+    if q:
+        conditions.append(Expense.vendor.ilike(f"%{_escape_like(q)}%", escape="\\"))
+
     count_query = select(func.count()).select_from(Expense)
     items_query = select(Expense).order_by(SORT_OPTIONS[sort])
-    if status_filter is not None:
-        count_query = count_query.where(Expense.status == status_filter)
-        items_query = items_query.where(Expense.status == status_filter)
+    for condition in conditions:
+        count_query = count_query.where(condition)
+        items_query = items_query.where(condition)
 
     total = await db.scalar(count_query)
     result = await db.execute(items_query.offset((page - 1) * page_size).limit(page_size))

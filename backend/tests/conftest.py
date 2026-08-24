@@ -65,7 +65,9 @@ from sqlalchemy.ext.asyncio import (  # noqa: E402
 from alembic import command  # noqa: E402
 from app.core.config import get_settings  # noqa: E402
 from app.db.session import AsyncSessionLocal  # noqa: E402
+from app.extraction.client import get_openai_client  # noqa: E402
 from app.main import app  # noqa: E402
+from app.storage.s3 import ensure_bucket_exists  # noqa: E402
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 settings = get_settings()
@@ -95,6 +97,14 @@ def _prepare_test_database() -> None:
     alembic_cfg = Config(str(BACKEND_DIR / "alembic.ini"))
     alembic_cfg.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
     command.upgrade(alembic_cfg, "head")
+
+
+@pytest_asyncio.fixture(scope="session", autouse=True)
+async def _prepare_object_storage() -> None:
+    # httpx's ASGITransport (used by the `client` fixture) never fires
+    # Starlette lifespan events, so the app's own startup hook that creates
+    # the MinIO bucket never runs under test — do it explicitly here instead.
+    await ensure_bucket_exists()
 
 
 @pytest_asyncio.fixture
@@ -148,3 +158,29 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
+
+
+@pytest.fixture
+def signup_user(client: AsyncClient):
+    """Returns a callable: signup_user(email) -> access_token, after registering
+    that user through the real signup endpoint."""
+
+    async def _signup(email: str, password: str = "hunter22222") -> str:
+        resp = await client.post("/api/auth/signup", json={"email": email, "password": password})
+        assert resp.status_code == 201, resp.text
+        return resp.json()["access_token"]
+
+    return _signup
+
+
+@pytest.fixture
+def mock_openai_client():
+    """Overrides the OpenAI client dependency for the duration of one test, so
+    the real API is never called. Yields the AsyncMock for tests to configure
+    (.return_value / .side_effect) and assert on (.call_count, etc.)."""
+    from unittest.mock import AsyncMock
+
+    fake_client = AsyncMock()
+    app.dependency_overrides[get_openai_client] = lambda: fake_client
+    yield fake_client
+    del app.dependency_overrides[get_openai_client]

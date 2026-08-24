@@ -7,6 +7,17 @@ import { api } from "./api";
 export type ExpenseStatus = "pending" | "processing" | "ready" | "confirmed" | "failed";
 export type SortOption = "date_desc" | "date_asc" | "created_desc" | "created_asc";
 
+// Mirrors app/extraction/schema.py CATEGORIES exactly.
+export const CATEGORIES = [
+  "Meals",
+  "Travel",
+  "Office Supplies",
+  "Software",
+  "Utilities",
+  "Professional Services",
+  "Other",
+] as const;
+
 export interface LineItem {
   id: string;
   description: string | null;
@@ -27,6 +38,32 @@ export interface ExpenseListItem {
   created_at: string;
 }
 
+// The scalar fields tracked in field_provenance and editable via PATCH.
+// line_items are a list, not a single value, and aren't provenance-tracked
+// or user-editable in this phase.
+export const EDITABLE_FIELDS = [
+  "vendor",
+  "vendor_tax_id",
+  "expense_date",
+  "subtotal",
+  "tax",
+  "total",
+  "currency",
+  "category",
+  "payment_method",
+] as const;
+
+export type EditableField = (typeof EDITABLE_FIELDS)[number];
+
+export interface FieldProvenanceEntry {
+  source: "ai" | "user";
+  ai_value: string | number | boolean | null;
+  confidence: number | null;
+  flags?: string[];
+}
+
+export type FieldProvenance = Partial<Record<EditableField, FieldProvenanceEntry>>;
+
 export interface ExpenseDetail extends ExpenseListItem {
   vendor_tax_id: string | null;
   subtotal: string | null;
@@ -35,7 +72,13 @@ export interface ExpenseDetail extends ExpenseListItem {
   updated_at: string;
   line_items: LineItem[];
   file_url: string | null;
+  field_provenance: FieldProvenance;
 }
+
+// Form inputs naturally produce strings (including for date/decimal
+// fields) — the backend's Pydantic model parses ISO date/Decimal strings
+// directly, so there's no need to convert before sending.
+export type ExpensePatch = Partial<Record<EditableField, string | null>>;
 
 export interface PaginatedExpenses {
   items: ExpenseListItem[];
@@ -75,5 +118,15 @@ export async function listExpenses(params: {
 
 export async function getExpense(id: string): Promise<ExpenseDetail> {
   const res = await api.get<ExpenseDetail>(`/api/expenses/${id}`);
+  return res.data;
+}
+
+export async function patchExpense(id: string, patch: ExpensePatch): Promise<ExpenseDetail> {
+  const res = await api.patch<ExpenseDetail>(`/api/expenses/${id}`, patch);
+  return res.data;
+}
+
+export async function confirmExpense(id: string): Promise<ExpenseDetail> {
+  const res = await api.post<ExpenseDetail>(`/api/expenses/${id}/confirm`);
   return res.data;
 }

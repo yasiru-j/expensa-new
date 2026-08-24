@@ -6,6 +6,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.api.auth import router as auth_router
+from app.api.dashboard import router as dashboard_router
 from app.api.expenses import router as expenses_router
 from app.core.config import get_settings
 from app.storage.s3 import ensure_bucket_exists
@@ -35,6 +36,7 @@ def create_app() -> FastAPI:
 
     app.include_router(auth_router)
     app.include_router(expenses_router)
+    app.include_router(dashboard_router)
 
     @app.get("/health")
     async def health() -> dict[str, str]:

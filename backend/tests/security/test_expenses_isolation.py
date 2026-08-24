@@ -75,6 +75,38 @@ async def test_user_cannot_see_another_users_expense_in_their_list(
     assert all(item["id"] != expense_id for item in body["items"])
 
 
+async def test_user_cannot_patch_another_users_expense(
+    client: AsyncClient, signup_user, owner_session: AsyncSession
+) -> None:
+    _user_b_id, expense_id = await _seed_expense(owner_session, "victim-patch@example.com")
+    token_a = await signup_user("attacker-patch@example.com")
+
+    resp = await client.patch(
+        f"/api/expenses/{expense_id}",
+        json={"vendor": "Hijacked"},
+        headers=_auth_headers(token_a),
+    )
+
+    assert resp.status_code == 404
+
+    untouched = await owner_session.get(Expense, expense_id)
+    assert untouched.vendor == "Someone Else's Vendor"
+
+
+async def test_user_cannot_confirm_another_users_expense(
+    client: AsyncClient, signup_user, owner_session: AsyncSession
+) -> None:
+    _user_b_id, expense_id = await _seed_expense(owner_session, "victim-confirm@example.com")
+    token_a = await signup_user("attacker-confirm@example.com")
+
+    resp = await client.post(f"/api/expenses/{expense_id}/confirm", headers=_auth_headers(token_a))
+
+    assert resp.status_code == 404
+
+    untouched = await owner_session.get(Expense, expense_id)
+    assert untouched.status == "ready"
+
+
 async def test_owner_can_still_reach_their_own_expense(
     client: AsyncClient, signup_user, owner_session: AsyncSession
 ) -> None:

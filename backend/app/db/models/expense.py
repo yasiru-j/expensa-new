@@ -2,8 +2,8 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import CHAR, CheckConstraint, Date, DateTime, ForeignKey, Numeric, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import CHAR, CheckConstraint, Date, DateTime, ForeignKey, Numeric, Text, func, text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -34,9 +34,14 @@ class Expense(Base):
     file_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     file_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     extracted_confidence: Mapped[Decimal | None] = mapped_column(Numeric(4, 3), nullable=True)
+    # { field_name: { source: "ai"|"user", ai_value: <original>, confidence: <num|null>,
+    #                  flags?: [str] } }
+    field_provenance: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )

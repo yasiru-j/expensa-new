@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.deps import get_current_user, get_current_user_id, get_db, user_scoped_session
-from app.db.models.expense import Expense
+from app.db.models.expense import STATUSES, Expense
 from app.db.models.line_item import LineItem
 from app.db.models.user import User
 from app.extraction.client import get_openai_client
@@ -20,10 +20,12 @@ from app.extraction.image_prep import (
     render_pdf_first_page,
     sniff_content_type,
 )
+from app.extraction.provenance import apply_user_edits, build_initial_provenance
 from app.extraction.service import extract_receipt
 from app.extraction.validation import validate_and_normalize
 from app.schemas.expense import (
     ExpenseListItem,
+    ExpensePatchRequest,
     ExpenseRead,
     ExpenseUploadResponse,
     LineItemRead,
@@ -36,6 +38,7 @@ settings = get_settings()
 
 EXTENSION_FOR = {"image/jpeg": "jpg", "image/png": "png", "application/pdf": "pdf"}
 CHUNK_SIZE = 1024 * 1024  # 1 MiB
+STATUS_PATTERN = f"^({'|'.join(STATUSES)})$"
 
 SORT_OPTIONS = {
     "date_desc": Expense.expense_date.desc().nulls_last(),
@@ -69,6 +72,28 @@ async def _read_upload_with_limit(file: UploadFile, max_bytes: int) -> bytes:
             )
         chunks.append(chunk)
     return b"".join(chunks)
+
+
+async def _to_expense_read(db: AsyncSession, expense: Expense) -> ExpenseRead:
+    line_items = (
+        (await db.execute(select(LineItem).where(LineItem.expense_id == expense.id)))
+        .scalars()
+        .all()
+    )
+    file_url = await presigned_get_url(expense.file_url) if expense.file_url else None
+
+    base = ExpenseListItem.model_validate(expense)
+    return ExpenseRead(
+        **base.model_dump(),
+        vendor_tax_id=expense.vendor_tax_id,
+        subtotal=expense.subtotal,
+        tax=expense.tax,
+        payment_method=expense.payment_method,
+        updated_at=expense.updated_at,
+        line_items=[LineItemRead.model_validate(li) for li in line_items],
+        file_url=file_url,
+        field_provenance=expense.field_provenance,
+    )
 
 
 @router.post("/upload", response_model=ExpenseUploadResponse, status_code=status.HTTP_201_CREATED)
@@ -144,6 +169,7 @@ async def upload_expense(
             expense.category = validated.category
             expense.payment_method = validated.payment_method
             expense.extracted_confidence = validated.confidence
+            expense.field_provenance = build_initial_provenance(validated)
             expense.status = "ready"
             for li in validated.line_items:
                 session.add(
@@ -166,13 +192,24 @@ async def list_expenses(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     sort: str = Query("date_desc", pattern="^(date_desc|date_asc|created_desc|created_asc)$"),
+    status_filter: str | None = Query(None, alias="status", pattern=STATUS_PATTERN),
 ) -> PaginatedExpenses:
     # No explicit WHERE user_id filter anywhere in this router: isolation is
     # enforced entirely by Postgres RLS, per the app's whole security model.
-    total = await db.scalar(select(func.count()).select_from(Expense))
-    result = await db.execute(
-        select(Expense).order_by(SORT_OPTIONS[sort]).offset((page - 1) * page_size).limit(page_size)
-    )
+    #
+    # status is unfiltered by default so the review workflow can see
+    # pending/processing/ready/failed rows, not just confirmed ones. Phase 4's
+    # dashboard aggregation is expected to pass status=confirmed explicitly —
+    # "only confirmed rows count as final" is a query-time choice, not a
+    # change to what this endpoint returns by default.
+    count_query = select(func.count()).select_from(Expense)
+    items_query = select(Expense).order_by(SORT_OPTIONS[sort])
+    if status_filter is not None:
+        count_query = count_query.where(Expense.status == status_filter)
+        items_query = items_query.where(Expense.status == status_filter)
+
+    total = await db.scalar(count_query)
+    result = await db.execute(items_query.offset((page - 1) * page_size).limit(page_size))
     items = result.scalars().all()
 
     return PaginatedExpenses(
@@ -193,24 +230,62 @@ async def get_expense(
     if expense is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Expense not found")
 
-    line_items = (
-        (await db.execute(select(LineItem).where(LineItem.expense_id == expense.id)))
-        .scalars()
-        .all()
-    )
-    file_url = await presigned_get_url(expense.file_url) if expense.file_url else None
+    return await _to_expense_read(db, expense)
 
-    base = ExpenseListItem.model_validate(expense)
-    return ExpenseRead(
-        **base.model_dump(),
-        vendor_tax_id=expense.vendor_tax_id,
-        subtotal=expense.subtotal,
-        tax=expense.tax,
-        payment_method=expense.payment_method,
-        updated_at=expense.updated_at,
-        line_items=[LineItemRead.model_validate(li) for li in line_items],
-        file_url=file_url,
-    )
+
+@router.patch("/{expense_id}", response_model=ExpenseRead)
+async def update_expense(
+    expense_id: uuid.UUID,
+    body: ExpensePatchRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ExpenseRead:
+    expense = await db.get(Expense, expense_id)
+    if expense is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Expense not found")
+
+    if expense.status != "ready":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Only a 'ready' expense can be edited (this one is '{expense.status}').",
+        )
+
+    changed_fields = body.model_fields_set
+    for field_name, value in body.model_dump(exclude_unset=True).items():
+        setattr(expense, field_name, value)
+
+    if changed_fields:
+        expense.field_provenance = apply_user_edits(expense.field_provenance, changed_fields)
+
+    await db.flush()
+    # updated_at has an onupdate=func.now() server-side default, so the flush
+    # expires it — refresh() reloads it the async-safe way. A bare attribute
+    # access here would try a synchronous lazy-load outside the SQLAlchemy
+    # async greenlet context and raise MissingGreenlet.
+    await db.refresh(expense)
+    return await _to_expense_read(db, expense)
+
+
+@router.post("/{expense_id}/confirm", response_model=ExpenseRead)
+async def confirm_expense(
+    expense_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ExpenseRead:
+    expense = await db.get(Expense, expense_id)
+    if expense is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Expense not found")
+
+    if expense.status != "ready":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Only a 'ready' expense can be confirmed (this one is '{expense.status}').",
+        )
+
+    expense.status = "confirmed"
+    await db.flush()
+    await db.refresh(expense)
+    return await _to_expense_read(db, expense)
 
 
 @router.delete("/{expense_id}", status_code=status.HTTP_204_NO_CONTENT)

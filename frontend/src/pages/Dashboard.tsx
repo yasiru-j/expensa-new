@@ -91,7 +91,11 @@ export function Dashboard() {
       />
 
       {selectedExpenseId && (
-        <ExpenseDetailModal expenseId={selectedExpenseId} onClose={() => setSelectedExpenseId(null)} />
+        <ExpenseDetailModal
+          expenseId={selectedExpenseId}
+          onClose={() => setSelectedExpenseId(null)}
+          onUpdated={() => void refresh(page, sort)}
+        />
       )}
     </div>
   );

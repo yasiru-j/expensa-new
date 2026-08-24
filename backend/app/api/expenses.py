@@ -4,11 +4,13 @@ from datetime import date as date_type
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, status
 from openai import AsyncOpenAI
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.deps import get_current_user, get_current_user_id, get_db, user_scoped_session
+from app.db.maintenance import sweep_stale_processing_rows
 from app.db.models.expense import STATUSES, Expense
 from app.db.models.line_item import LineItem
 from app.db.models.user import User
@@ -23,8 +25,7 @@ from app.extraction.image_prep import (
 )
 from app.extraction.provenance import apply_user_edits, build_initial_provenance
 from app.extraction.schema import CATEGORIES
-from app.extraction.service import extract_receipt
-from app.extraction.validation import validate_and_normalize
+from app.extraction.service import extract_with_tiering
 from app.schemas.expense import (
     ExpenseListItem,
     ExpensePatchRequest,
@@ -34,6 +35,8 @@ from app.schemas.expense import (
     PaginatedExpenses,
 )
 from app.storage.s3 import delete_object, object_key_for, presigned_get_url, put_object
+from app.usage.quota import QuotaExceededError, get_current_usage, try_increment_usage
+from app.usage.rate_limit import check_rate_limit
 
 router = APIRouter(prefix="/api/expenses", tags=["expenses"])
 settings = get_settings()
@@ -42,6 +45,8 @@ EXTENSION_FOR = {"image/jpeg": "jpg", "image/png": "png", "application/pdf": "pd
 CHUNK_SIZE = 1024 * 1024  # 1 MiB
 STATUS_PATTERN = f"^({'|'.join(STATUSES)})$"
 CATEGORY_PATTERN = f"^({'|'.join(CATEGORIES)})$"
+IDEMPOTENCY_INDEX = ["user_id", "file_hash"]
+IDEMPOTENCY_INDEX_WHERE = text("status <> 'failed'")
 
 SORT_OPTIONS = {
     "date_desc": Expense.expense_date.desc().nulls_last(),
@@ -56,6 +61,25 @@ def _escape_like(value: str) -> str:
     vendor search for e.g. "50% off" doesn't have the % treated as a
     wildcard."""
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+async def _rate_limited_user_id(
+    user_id: uuid.UUID = Depends(get_current_user_id),
+) -> uuid.UUID:
+    """auth -> rate limit, in that order: this dependency chains off
+    get_current_user_id, so authentication always resolves first, and a
+    rate-limited caller is rejected before any handler body code (including
+    the quota check) runs."""
+    allowed, retry_after = await check_rate_limit(
+        user_id, "upload", settings.upload_rate_limit_per_hour, settings.rate_limit_window_seconds
+    )
+    if not allowed:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many uploads. Try again in {retry_after}s.",
+            headers={"Retry-After": str(retry_after)},
+        )
+    return user_id
 
 
 async def _read_upload_with_limit(file: UploadFile, max_bytes: int) -> bytes:
@@ -109,9 +133,26 @@ async def _to_expense_read(db: AsyncSession, expense: Expense) -> ExpenseRead:
 @router.post("/upload", response_model=ExpenseUploadResponse, status_code=status.HTTP_201_CREATED)
 async def upload_expense(
     file: UploadFile,
-    user_id: uuid.UUID = Depends(get_current_user_id),
+    user_id: uuid.UUID = Depends(_rate_limited_user_id),
     openai_client: AsyncOpenAI = Depends(get_openai_client),
 ) -> ExpenseUploadResponse:
+    # Guardrail order (TRD §6/§8): auth -> rate limit (both above, via the
+    # dependency chain) -> quota -> file validation -> extract.
+    #
+    # This early quota check is a cheap, read-only fast-fail — no point
+    # reading/parsing a file for a user already over quota — but it is NOT
+    # the authoritative gate (see try_increment_usage below for that).
+    async with user_scoped_session(user_id) as session:
+        current_usage = await get_current_usage(session, user_id)
+    if current_usage >= settings.monthly_extraction_quota:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                f"Monthly extraction quota reached ({settings.monthly_extraction_quota}/month). "
+                "Try again next month."
+            ),
+        )
+
     raw_bytes = await _read_upload_with_limit(file, settings.max_upload_size_bytes)
     if not raw_bytes:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Empty file.")
@@ -132,20 +173,37 @@ async def upload_expense(
         image_bytes, image_mime = raw_bytes, content_type
 
     file_hash = hashlib.sha256(raw_bytes).hexdigest()
+    object_key = object_key_for(user_id, EXTENSION_FOR[content_type])
 
-    # --- txn 1: idempotency check + create the processing row ---
+    # --- txn 1: sweep any stale row for this user, then idempotency-safe insert ---
     async with user_scoped_session(user_id) as session:
-        existing = await session.scalar(select(Expense).where(Expense.file_hash == file_hash))
-        if existing is not None:
+        # A row stuck at `processing` (a crash between txn 1 and txn 2 on a
+        # PREVIOUS upload) would otherwise permanently block a fresh retry of
+        # that same file below — the unique index treats `processing` as a
+        # live, conflicting status.
+        await sweep_stale_processing_rows(session)
+
+        # ON CONFLICT DO NOTHING against the partial unique index, rather
+        # than a SELECT-then-INSERT: the database resolves the race between
+        # two concurrent identical uploads atomically. Whichever request's
+        # INSERT loses returns no row and falls back to reading the winner's.
+        insert_stmt = (
+            pg_insert(Expense)
+            .values(user_id=user_id, file_url=object_key, file_hash=file_hash, status="processing")
+            .on_conflict_do_nothing(
+                index_elements=IDEMPOTENCY_INDEX, index_where=IDEMPOTENCY_INDEX_WHERE
+            )
+            .returning(Expense.id)
+        )
+        inserted = (await session.execute(insert_stmt)).first()
+
+        if inserted is None:
+            existing = await session.scalar(
+                select(Expense).where(Expense.file_hash == file_hash, Expense.status != "failed")
+            )
             return ExpenseUploadResponse(id=existing.id, status=existing.status)
 
-        object_key = object_key_for(user_id, EXTENSION_FOR[content_type])
-        expense = Expense(
-            user_id=user_id, file_url=object_key, file_hash=file_hash, status="processing"
-        )
-        session.add(expense)
-        await session.flush()
-        expense_id = expense.id
+        expense_id = inserted[0]
     # txn 1 committed; connection released here — nothing DB-related is held
     # open across the OpenAI/MinIO calls below.
 
@@ -153,9 +211,21 @@ async def upload_expense(
     try:
         await put_object(object_key, raw_bytes, content_type)
         downscaled_bytes, downscaled_mime = downscale_image(image_bytes, image_mime)
-        extraction = await extract_receipt(openai_client, downscaled_bytes, downscaled_mime)
-        validated = validate_and_normalize(extraction)
-    except (NonReceiptError, ExtractionFailedError):
+
+        # --- atomic quota gate, immediately before the paid call ---
+        # A single increment covers the WHOLE extraction attempt below, no
+        # matter how many actual OpenAI calls it makes internally (up to 2
+        # tiers x up to 2 attempts each) — quota counts uploads, not raw API
+        # calls.
+        async with user_scoped_session(user_id) as session:
+            quota_ok = await try_increment_usage(session, user_id)
+        if not quota_ok:
+            raise QuotaExceededError("Monthly extraction quota reached mid-request.")
+
+        _extraction, validated = await extract_with_tiering(
+            openai_client, downscaled_bytes, downscaled_mime
+        )
+    except (NonReceiptError, ExtractionFailedError, QuotaExceededError):
         pass  # row lands at status=failed below
     except Exception:
         # Any unexpected failure (storage, downscaling, a transport error type
@@ -221,6 +291,8 @@ async def list_expenses(
     # dashboard aggregation is expected to pass status=confirmed explicitly —
     # "only confirmed rows count as final" is a query-time choice, not a
     # change to what this endpoint returns by default.
+    await sweep_stale_processing_rows(db)
+
     conditions = []
     if status_filter is not None:
         conditions.append(Expense.status == status_filter)

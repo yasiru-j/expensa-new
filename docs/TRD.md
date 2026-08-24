@@ -142,11 +142,24 @@ alter table expenses   enable row level security;
 alter table line_items enable row level security;
 alter table usage      enable row level security;
 
+-- FORCE so RLS also applies to the table owner (the migration role) — without
+-- it, only non-owner roles are restricted. The app connects as a separate,
+-- non-owner, non-superuser role (expensa_app) for exactly this reason.
+alter table expenses   force row level security;
+alter table line_items force row level security;
+alter table usage      force row level security;
+
+-- NULLIF(..., '') guards a real Postgres/pooling gotcha: once a session has
+-- set a custom GUC at least once, current_setting(..., true) on a later
+-- transaction over the same pooled connection can return '' — not NULL — if
+-- the variable wasn't set again. '' would otherwise fail the ::uuid cast
+-- instead of comparing (correctly) as not-equal.
+
 -- Expenses: owner-only, keyed off the request's session variable
 create policy expenses_isolation on expenses
   for all
-  using      (user_id = current_setting('app.user_id', true)::uuid)
-  with check (user_id = current_setting('app.user_id', true)::uuid);
+  using      (user_id = nullif(current_setting('app.user_id', true), '')::uuid)
+  with check (user_id = nullif(current_setting('app.user_id', true), '')::uuid);
 
 -- Line items: access via parent expense ownership
 create policy line_items_isolation on line_items
@@ -154,19 +167,19 @@ create policy line_items_isolation on line_items
   using (
     exists (select 1 from expenses e
             where e.id = line_items.expense_id
-              and e.user_id = current_setting('app.user_id', true)::uuid)
+              and e.user_id = nullif(current_setting('app.user_id', true), '')::uuid)
   )
   with check (
     exists (select 1 from expenses e
             where e.id = line_items.expense_id
-              and e.user_id = current_setting('app.user_id', true)::uuid)
+              and e.user_id = nullif(current_setting('app.user_id', true), '')::uuid)
   );
 
 -- Usage: owner-only
 create policy usage_isolation on usage
   for all
-  using      (user_id = current_setting('app.user_id', true)::uuid)
-  with check (user_id = current_setting('app.user_id', true)::uuid);
+  using      (user_id = nullif(current_setting('app.user_id', true), '')::uuid)
+  with check (user_id = nullif(current_setting('app.user_id', true), '')::uuid);
 ```
 
 **Setting the variable per request (FastAPI + SQLAlchemy):**
@@ -174,11 +187,15 @@ create policy usage_isolation on usage
 ```python
 # Inside a per-request DB transaction, after authenticating the user:
 await session.execute(
-    text("SET LOCAL app.user_id = :uid"), {"uid": str(current_user.id)}
+    text("SELECT set_config('app.user_id', :uid, true)"), {"uid": str(current_user.id)}
 )
 ```
 
-`SET LOCAL` scopes the value to the current transaction, so it never leaks across requests on a pooled connection.
+`set_config(name, value, is_local=true)` is `SET LOCAL` expressed as a function call rather than
+the `SET LOCAL` statement itself — the statement's own grammar takes a string literal for the
+value, not a bind parameter, so it can't be used safely with parameterized queries. The function
+form accepts a normal bind parameter and has identical transaction-local scoping: the value resets
+at the end of the transaction, so it never leaks across requests on a pooled connection.
 
 **Storage:** source files are stored under a per-user path prefix (e.g. `receipts/{user_id}/{expense_id}.{ext}`) in a private bucket, served via short-lived **presigned URLs** — never public links.
 

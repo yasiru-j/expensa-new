@@ -30,12 +30,26 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = "redis://localhost:6379/0"
 
-    # Object storage
+    # Object storage. s3_endpoint_url is used for server-side calls (PUT, HEAD,
+    # DELETE) — inside Docker this is the internal service hostname (minio:9000).
+    # s3_public_endpoint_url is used ONLY when signing presigned GET URLs, since
+    # those are followed by a browser outside the Docker network; an S3
+    # signature covers the host, so a URL signed for one endpoint can't simply
+    # be string-rewritten to another without invalidating the signature.
     s3_endpoint_url: str = "http://localhost:9000"
+    s3_public_endpoint_url: str = "http://localhost:9000"
     s3_access_key: str = "minioadmin"
     s3_secret_key: str = "minioadmin"
     s3_bucket_name: str = "expensa-receipts"
     s3_region: str = "us-east-1"
+
+    # Extraction (OpenAI)
+    openai_api_key: str = ""
+    openai_extraction_model: str = "gpt-4o-mini"
+
+    # Upload guardrails — enforced before any OpenAI call
+    max_upload_size_bytes: int = 10 * 1024 * 1024
+    max_pdf_pages: int = 1
 
     # CORS / cookies
     cors_origins: str = "http://localhost:5173"

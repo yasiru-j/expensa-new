@@ -86,7 +86,9 @@ export function Dashboard() {
     } catch (err) {
       if (isAxiosError(err) && err.response?.status === 413) {
         setUploadError("That file is too large.");
-      } else if (isAxiosError(err) && err.response?.status === 400) {
+      } else if (isAxiosError(err) && (err.response?.status === 400 || err.response?.status === 429)) {
+        // 429 covers both the per-hour rate limit and the monthly quota —
+        // the backend's message already distinguishes which one fired.
         const detail = err.response.data as { detail?: string } | undefined;
         setUploadError(detail?.detail ?? "That file couldn't be processed.");
       } else {

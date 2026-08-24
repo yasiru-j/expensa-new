@@ -38,7 +38,15 @@ def test_refresh_token_has_unique_jti() -> None:
 
 def test_decode_token_rejects_tampered_signature() -> None:
     token = security.create_access_token(uuid.uuid4())
-    tampered = token[:-1] + ("A" if token[-1] != "A" else "B")
+    header_payload, signature = token.rsplit(".", 1)
+
+    # Flip the FIRST character of the signature, not the last: for a 256-bit
+    # HS256 signature base64url-encoded without padding, the last character's
+    # low 2 bits are unused padding — some replacement values there decode to
+    # byte-identical signature bytes, making the tamper a no-op. The first
+    # character is a fully-significant position, so this is deterministic.
+    tampered_char = "A" if signature[0] != "A" else "B"
+    tampered = f"{header_payload}.{tampered_char}{signature[1:]}"
 
     with pytest.raises(jwt.PyJWTError):
         security.decode_token(tampered)

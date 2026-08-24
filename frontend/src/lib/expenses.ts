@@ -101,16 +101,27 @@ export async function uploadExpense(file: File): Promise<UploadResponse> {
   return res.data;
 }
 
-export async function listExpenses(params: {
-  page?: number;
-  pageSize?: number;
-  sort?: SortOption;
-}): Promise<PaginatedExpenses> {
+export interface ExpenseFilters {
+  status?: ExpenseStatus;
+  dateFrom?: string; // ISO date
+  dateTo?: string; // ISO date
+  category?: string;
+  q?: string; // free-text vendor search
+}
+
+export async function listExpenses(
+  params: { page?: number; pageSize?: number; sort?: SortOption } & ExpenseFilters,
+): Promise<PaginatedExpenses> {
   const res = await api.get<PaginatedExpenses>("/api/expenses", {
     params: {
       page: params.page ?? 1,
       page_size: params.pageSize ?? 20,
       sort: params.sort ?? "date_desc",
+      status: params.status,
+      date_from: params.dateFrom,
+      date_to: params.dateTo,
+      category: params.category,
+      q: params.q,
     },
   });
   return res.data;
@@ -128,5 +139,37 @@ export async function patchExpense(id: string, patch: ExpensePatch): Promise<Exp
 
 export async function confirmExpense(id: string): Promise<ExpenseDetail> {
   const res = await api.post<ExpenseDetail>(`/api/expenses/${id}/confirm`);
+  return res.data;
+}
+
+// Every aggregate is grouped by currency alongside its own dimension — never
+// summed across different currencies into one number.
+export interface CurrencyAmount {
+  currency: string | null;
+  total: string;
+}
+
+export interface CategoryBreakdown {
+  category: string;
+  currency: string | null;
+  total: string;
+  count: number;
+}
+
+export interface MonthlyBreakdown {
+  month: string; // "YYYY-MM"
+  currency: string | null;
+  total: string;
+}
+
+export interface DashboardSummary {
+  month_to_date: CurrencyAmount[];
+  receipt_count: number;
+  by_category: CategoryBreakdown[];
+  by_month: MonthlyBreakdown[];
+}
+
+export async function getDashboardSummary(months = 12): Promise<DashboardSummary> {
+  const res = await api.get<DashboardSummary>("/api/dashboard/summary", { params: { months } });
   return res.data;
 }

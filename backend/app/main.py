@@ -1,15 +1,26 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.api.auth import router as auth_router
+from app.api.expenses import router as expenses_router
 from app.core.config import get_settings
+from app.storage.s3 import ensure_bucket_exists
 
 settings = get_settings()
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    await ensure_bucket_exists()
+    yield
+
+
 def create_app() -> FastAPI:
-    app = FastAPI(title="Expensa API")
+    app = FastAPI(title="Expensa API", lifespan=lifespan)
 
     app.add_middleware(
         CORSMiddleware,
@@ -23,6 +34,7 @@ def create_app() -> FastAPI:
     app.add_middleware(SessionMiddleware, secret_key=settings.jwt_secret_key)
 
     app.include_router(auth_router)
+    app.include_router(expenses_router)
 
     @app.get("/health")
     async def health() -> dict[str, str]:

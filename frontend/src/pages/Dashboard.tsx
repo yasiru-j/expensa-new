@@ -1,10 +1,20 @@
 import { isAxiosError } from "axios";
 import { useCallback, useEffect, useState } from "react";
 
+import { DashboardSummarySection } from "../components/DashboardSummarySection";
 import { ExpenseDetailModal } from "../components/ExpenseDetailModal";
+import { ExpensesFilterBar } from "../components/ExpensesFilterBar";
 import { ExpensesTable } from "../components/ExpensesTable";
 import { UploadDropzone } from "../components/UploadDropzone";
-import { listExpenses, uploadExpense, type ExpenseListItem, type SortOption } from "../lib/expenses";
+import {
+  getDashboardSummary,
+  listExpenses,
+  uploadExpense,
+  type DashboardSummary,
+  type ExpenseFilters,
+  type ExpenseListItem,
+  type SortOption,
+} from "../lib/expenses";
 
 const PAGE_SIZE = 20;
 
@@ -13,25 +23,48 @@ export function Dashboard() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState<SortOption>("date_desc");
+  const [filters, setFilters] = useState<ExpenseFilters>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [selectedExpenseId, setSelectedExpenseId] = useState<string | null>(null);
+  const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [isSummaryLoading, setIsSummaryLoading] = useState(true);
 
-  const refresh = useCallback(async (targetPage: number, targetSort: SortOption) => {
-    setIsLoading(true);
+  const refresh = useCallback(
+    async (targetPage: number, targetSort: SortOption, targetFilters: ExpenseFilters) => {
+      setIsLoading(true);
+      try {
+        const data = await listExpenses({
+          page: targetPage,
+          sort: targetSort,
+          ...targetFilters,
+        });
+        setItems(data.items);
+        setTotal(data.total);
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [],
+  );
+
+  const refreshSummary = useCallback(async () => {
+    setIsSummaryLoading(true);
     try {
-      const data = await listExpenses({ page: targetPage, sort: targetSort });
-      setItems(data.items);
-      setTotal(data.total);
+      setSummary(await getDashboardSummary());
     } finally {
-      setIsLoading(false);
+      setIsSummaryLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void refresh(page, sort);
-  }, [page, sort, refresh]);
+    void refresh(page, sort, filters);
+  }, [page, sort, filters, refresh]);
+
+  useEffect(() => {
+    void refreshSummary();
+  }, [refreshSummary]);
 
   async function handleFileSelected(file: File) {
     setUploadError(null);
@@ -45,10 +78,11 @@ export function Dashboard() {
         );
       }
       // Jump to the most-recently-uploaded view so the new row is visible
-      // immediately, regardless of what the user was sorted/paged to before.
+      // immediately, regardless of what the user was sorted/paged/filtered to before.
       setSort("created_desc");
       setPage(1);
-      await refresh(1, "created_desc");
+      setFilters({});
+      await refresh(1, "created_desc", {});
     } catch (err) {
       if (isAxiosError(err) && err.response?.status === 413) {
         setUploadError("That file is too large.");
@@ -63,10 +97,22 @@ export function Dashboard() {
     }
   }
 
+  function handleReviewUpdated() {
+    void refresh(page, sort, filters);
+    // A save/confirm can change a row's status or confirmed totals — the
+    // dashboard aggregates need to reflect that too.
+    void refreshSummary();
+  }
+
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-2xl font-semibold text-gray-900">Upload a receipt</h1>
+        <h1 className="text-2xl font-semibold text-gray-900">Dashboard</h1>
+        <DashboardSummarySection summary={summary} isLoading={isSummaryLoading} />
+      </div>
+
+      <div>
+        <h2 className="text-lg font-semibold text-gray-900">Upload a receipt</h2>
         <p className="mt-1 text-gray-600">JPEG, PNG, or a single-page PDF.</p>
         <div className="mt-4">
           <UploadDropzone onFileSelected={handleFileSelected} disabled={isUploading} />
@@ -75,26 +121,36 @@ export function Dashboard() {
         {uploadError && <p className="mt-2 text-sm text-red-600">{uploadError}</p>}
       </div>
 
-      <ExpensesTable
-        items={items}
-        isLoading={isLoading}
-        sort={sort}
-        onSortChange={(next) => {
-          setSort(next);
-          setPage(1);
-        }}
-        page={page}
-        pageSize={PAGE_SIZE}
-        total={total}
-        onPageChange={setPage}
-        onRowClick={setSelectedExpenseId}
-      />
+      <div className="space-y-3">
+        <ExpensesFilterBar
+          filters={filters}
+          onChange={(next) => {
+            setFilters(next);
+            setPage(1);
+          }}
+        />
+
+        <ExpensesTable
+          items={items}
+          isLoading={isLoading}
+          sort={sort}
+          onSortChange={(next) => {
+            setSort(next);
+            setPage(1);
+          }}
+          page={page}
+          pageSize={PAGE_SIZE}
+          total={total}
+          onPageChange={setPage}
+          onRowClick={setSelectedExpenseId}
+        />
+      </div>
 
       {selectedExpenseId && (
         <ExpenseDetailModal
           expenseId={selectedExpenseId}
           onClose={() => setSelectedExpenseId(null)}
-          onUpdated={() => void refresh(page, sort)}
+          onUpdated={handleReviewUpdated}
         />
       )}
     </div>

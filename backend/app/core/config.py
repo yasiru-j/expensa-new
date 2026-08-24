@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # app/core/config.py -> app/core -> app -> backend -> repo root
@@ -43,13 +44,27 @@ class Settings(BaseSettings):
     s3_bucket_name: str = "expensa-receipts"
     s3_region: str = "us-east-1"
 
-    # Extraction (OpenAI)
+    # Extraction (OpenAI). Model tiering (TRD §8): the cheap model runs first;
+    # the escalated model is only tried when the cheap model's own confidence
+    # is below the threshold or server-side validation flags an issue.
     openai_api_key: str = ""
     openai_extraction_model: str = "gpt-4o-mini"
+    openai_extraction_model_escalated: str = "gpt-4o"
+    model_tier_confidence_threshold: float = Field(0.7, ge=0, le=1)
 
     # Upload guardrails — enforced before any OpenAI call
     max_upload_size_bytes: int = 10 * 1024 * 1024
     max_pdf_pages: int = 1
+
+    # Cost control (TRD §8). Quota is enforced via an atomic increment-and-check
+    # on the `usage` table; rate limiting via a Redis sliding window.
+    monthly_extraction_quota: int = Field(50, ge=1)
+    upload_rate_limit_per_hour: int = Field(20, ge=1)
+    rate_limit_window_seconds: int = Field(3600, ge=1)
+
+    # A `processing` row older than this (crash between the two upload
+    # transactions, or a worker that never came back) gets swept to `failed`.
+    stale_processing_minutes: int = Field(15, ge=1)
 
     # CORS / cookies
     cors_origins: str = "http://localhost:5173"

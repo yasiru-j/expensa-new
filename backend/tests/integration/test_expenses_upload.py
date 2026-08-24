@@ -172,3 +172,33 @@ async def test_reuploading_the_same_file_is_idempotent(
 
     listing = await client.get("/api/expenses", headers=_auth_headers(token))
     assert listing.json()["total"] == 1
+
+
+async def test_upload_survives_a_totally_unexpected_error_in_the_pipeline(
+    client: AsyncClient, signup_user, mock_openai_client, monkeypatch
+) -> None:
+    """The upload handler's broad `except Exception` must catch failure types
+    that aren't NonReceiptError/ExtractionFailedError too — e.g. a bug in
+    image prep, or storage — and still land the row at `failed` rather than
+    leaving it stuck at `processing`."""
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("totally unexpected failure, unrelated to extraction")
+
+    monkeypatch.setattr("app.api.expenses.downscale_image", _boom)
+    token = await signup_user("upload-unexpected-error@example.com")
+
+    resp = await client.post(
+        "/api/expenses/upload",
+        files={"file": ("receipt.jpg", IMAGE_BYTES, "image/jpeg")},
+        headers=_auth_headers(token),
+    )
+
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["status"] == "failed"
+
+    detail = await client.get(f"/api/expenses/{body['id']}", headers=_auth_headers(token))
+    assert detail.json()["status"] == "failed"
+    # Never even reached the (mocked) OpenAI call.
+    mock_openai_client.chat.completions.create.assert_not_called()

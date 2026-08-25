@@ -173,3 +173,45 @@ export async function getDashboardSummary(months = 12): Promise<DashboardSummary
   const res = await api.get<DashboardSummary>("/api/dashboard/summary", { params: { months } });
   return res.data;
 }
+
+export type ExportFormat = "csv" | "xlsx";
+
+const DEFAULT_EXPORT_FILENAME: Record<ExportFormat, string> = {
+  csv: "expensa-expenses.csv",
+  xlsx: "expensa-expenses.xlsx",
+};
+
+// GET /api/export requires the same bearer auth as every other endpoint, so
+// a plain <a href="/api/export"> can't be used (no way to attach the
+// Authorization header) — instead we fetch as a blob and hand the browser a
+// synthetic download via an object URL.
+export async function exportExpenses(
+  format: ExportFormat,
+  sort: SortOption,
+  filters: ExpenseFilters,
+): Promise<void> {
+  const res = await api.get<Blob>("/api/export", {
+    responseType: "blob",
+    params: {
+      format,
+      sort,
+      status: filters.status,
+      date_from: filters.dateFrom,
+      date_to: filters.dateTo,
+      category: filters.category,
+      q: filters.q,
+    },
+  });
+
+  const disposition = res.headers["content-disposition"] as string | undefined;
+  const filename = disposition?.match(/filename="([^"]+)"/)?.[1] ?? DEFAULT_EXPORT_FILENAME[format];
+
+  const url = URL.createObjectURL(res.data);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}

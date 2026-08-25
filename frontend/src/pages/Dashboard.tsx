@@ -5,6 +5,7 @@ import { DashboardSummarySection } from "../components/DashboardSummarySection";
 import { ExpenseDetailModal } from "../components/ExpenseDetailModal";
 import { ExpensesFilterBar } from "../components/ExpensesFilterBar";
 import { ExpensesTable } from "../components/ExpensesTable";
+import { ExportControls } from "../components/ExportControls";
 import { UploadDropzone } from "../components/UploadDropzone";
 import {
   getDashboardSummary,
@@ -124,13 +125,16 @@ export function Dashboard() {
       </div>
 
       <div className="space-y-3">
-        <ExpensesFilterBar
-          filters={filters}
-          onChange={(next) => {
-            setFilters(next);
-            setPage(1);
-          }}
-        />
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <ExpensesFilterBar
+            filters={filters}
+            onChange={(next) => {
+              setFilters(next);
+              setPage(1);
+            }}
+          />
+          <ExportControls filters={filters} sort={sort} />
+        </div>
 
         <ExpensesTable
           items={items}

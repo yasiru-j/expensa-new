@@ -1,9 +1,11 @@
 import base64
+import time
 
 from openai import AsyncOpenAI
 from pydantic import ValidationError
 
 from app.core.config import get_settings
+from app.core.logging import get_logger, log_event
 from app.extraction.exceptions import (
     ExtractionFailedError,
     ExtractionParseError,
@@ -15,12 +17,14 @@ from app.extraction.schema import RECEIPT_JSON_SCHEMA, ReceiptExtraction
 from app.extraction.validation import ValidatedExpense, validate_and_normalize
 
 settings = get_settings()
+logger = get_logger("expensa.extraction")
 
 
 async def _call_openai(
     client: AsyncOpenAI, image_bytes: bytes, mime_type: str, model: str
 ) -> ReceiptExtraction:
     image_b64 = base64.b64encode(image_bytes).decode("ascii")
+    started = time.perf_counter()
     try:
         response = await client.chat.completions.create(
             model=model,
@@ -40,13 +44,34 @@ async def _call_openai(
             ],
         )
     except Exception as exc:
+        log_event(
+            logger,
+            "extraction_call",
+            model=model,
+            outcome="transport_error",
+            duration_ms=round((time.perf_counter() - started) * 1000, 1),
+        )
         raise ExtractionTransportError(str(exc)) from exc
 
     content = response.choices[0].message.content
+    duration_ms = round((time.perf_counter() - started) * 1000, 1)
     try:
-        return ReceiptExtraction.model_validate_json(content)
+        parsed = ReceiptExtraction.model_validate_json(content)
     except (ValidationError, ValueError, TypeError) as exc:
+        log_event(
+            logger, "extraction_call", model=model, outcome="parse_error", duration_ms=duration_ms
+        )
         raise ExtractionParseError(str(exc)) from exc
+
+    log_event(
+        logger,
+        "extraction_call",
+        model=model,
+        outcome="non_receipt" if not parsed.is_receipt else "success",
+        duration_ms=duration_ms,
+        confidence=parsed.confidence,
+    )
+    return parsed
 
 
 async def extract_receipt(
@@ -107,6 +132,13 @@ async def extract_with_tiering(
 
     needs_escalation = extraction.confidence < settings.model_tier_confidence_threshold or bool(
         validated.field_flags
+    )
+    log_event(
+        logger,
+        "extraction_tiering",
+        escalating=needs_escalation,
+        cheap_tier_confidence=extraction.confidence,
+        field_flags_count=len(validated.field_flags),
     )
     if not needs_escalation:
         return extraction, validated

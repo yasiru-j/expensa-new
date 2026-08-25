@@ -37,6 +37,9 @@ class ExpenseListItem(BaseModel):
     status: str
     extracted_confidence: Decimal | None
     created_at: datetime
+    # True when another expense of this user's shares vendor + expense_date +
+    # total — a warning surfaced on the row/review, never a hard block.
+    is_potential_duplicate: bool = False
 
 
 class ExpenseRead(ExpenseListItem):

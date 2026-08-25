@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import security
 from app.core.config import get_settings
+from app.core.cookies import REFRESH_COOKIE_NAME, clear_refresh_cookie, set_refresh_cookie
 from app.core.deps import get_current_user, get_db
 from app.core.oauth import oauth
 from app.core.refresh_tokens import pop_refresh_jti, revoke_refresh_jti, store_refresh_jti
@@ -27,31 +28,12 @@ from app.schemas.user import UserRead
 settings = get_settings()
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-REFRESH_COOKIE_NAME = "refresh_token"
-REFRESH_COOKIE_PATH = "/api/auth"
-
-
-def _set_refresh_cookie(response: Response, token: str) -> None:
-    response.set_cookie(
-        key=REFRESH_COOKIE_NAME,
-        value=token,
-        httponly=True,
-        secure=settings.cookie_secure,
-        samesite="lax",
-        path=REFRESH_COOKIE_PATH,
-        max_age=settings.refresh_token_expire_days * 24 * 60 * 60,
-    )
-
-
-def _clear_refresh_cookie(response: Response) -> None:
-    response.delete_cookie(key=REFRESH_COOKIE_NAME, path=REFRESH_COOKIE_PATH)
-
 
 async def _issue_tokens(user_id: uuid.UUID, response: Response) -> AccessTokenResponse:
     access_token = security.create_access_token(user_id)
     refresh_token, jti = security.create_refresh_token(user_id)
     await store_refresh_jti(jti, user_id)
-    _set_refresh_cookie(response, refresh_token)
+    set_refresh_cookie(response, refresh_token)
     return AccessTokenResponse(access_token=access_token)
 
 
@@ -130,7 +112,7 @@ async def logout(request: Request, response: Response) -> MessageResponse:
             await revoke_refresh_jti(payload["jti"])
         except jwt.PyJWTError:
             pass
-    _clear_refresh_cookie(response)
+    clear_refresh_cookie(response)
     return MessageResponse(message="Logged out")
 
 

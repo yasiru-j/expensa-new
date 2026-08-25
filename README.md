@@ -102,6 +102,50 @@ transactions — is swept to `failed` opportunistically on the next upload or li
 that user, once it's older than `STALE_PROCESSING_MINUTES` (default 15). See
 `app/db/maintenance.py` for why this is a swept-on-read check rather than a scheduled job.
 
+## Export
+
+`GET /api/export` streams the caller's expenses as CSV or Excel (XLSX), owner-scoped via
+RLS and filtered identically to `GET /api/expenses` — both build their `WHERE` clause from
+the same `build_expense_conditions` helper, so the exported rows can never drift from what
+the table is currently showing for the same `status` / `date_from` / `date_to` / `category` /
+`q` params.
+
+- **Format**: a `format=csv|xlsx` query param (default `csv`) — not `Accept`-header content
+  negotiation, for consistency with every other filter on this API already being a query
+  param, and so the export is a plain linkable/downloadable URL.
+- **Currency**: every row includes its `currency` column explicitly. A totals block is
+  appended after the data rows, grouped by currency (e.g. `TOTAL (AUD)`, `TOTAL (USD)`) —
+  amounts are never summed across different currencies into one number, matching the
+  dashboard's per-currency aggregates.
+- **Numbers**: money fields are rendered from `Decimal` with `format(value, "f")` — fixed
+  notation, no scientific notation, no float artifacts (e.g. `12.34`, never `12.340000001`
+  or a locale thousands separator).
+- **CSV injection**: a text field (`vendor`, `vendor_tax_id`, `payment_method`) whose value
+  starts with `=`, `+`, `-`, or `@` is prefixed with a leading apostrophe before being
+  written — the same thing Excel does when a user manually types a value that looks like a
+  formula. This defuses formula/DDE injection from a crafted vendor name without altering
+  the visible text. Applied to both formats, though XLSX cell values written by openpyxl are
+  already typed as plain strings (not formulas) so they weren't executable there either.
+- **Encoding**: the CSV is UTF-8 with a leading BOM so Excel opens non-ASCII vendor names
+  (e.g. "Café", "日本語") correctly instead of mangling them.
+- **Line items**: excluded from the flat CSV (they don't fit a "one row per expense" shape
+  without duplicating expense rows) but included in the XLSX as a second "Line Items" sheet,
+  keyed by `expense_id` — no data is silently dropped from the richer format.
+- **Streaming**: CSV is genuinely streamed row-by-row, batched off the database (500 rows at
+  a time) inside one transaction, so the full result set is never held in memory as Python
+  objects. XLSX can't be streamed the same way — the `.xlsx` container is a zip archive
+  that's only valid once fully written — so it's built with openpyxl's `write_only` mode
+  (which still avoids holding a full worksheet object graph) into an in-memory buffer and
+  returned as one chunk.
+- **Filenames**: `expensa-expenses-YYYYMMDD.csv` / `.xlsx`, with the matching `Content-Type`
+  and a `Content-Disposition: attachment` header.
+- **Empty results**: a filter that matches nothing still returns `200` with a valid
+  headers-only file, not a `500` or an empty body.
+
+The frontend's export control (next to the expenses filter bar) always sends the currently
+active filters and sort, so what downloads matches what's on screen — including the empty
+case, which downloads a valid headers-only file rather than erroring.
+
 ### Required manual step: provider spend cap
 
 **This is not something code can enforce** — quotas and rate limits protect against a single

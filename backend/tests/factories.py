@@ -3,6 +3,7 @@ import json
 from types import SimpleNamespace
 
 from PIL import Image
+from pypdf import PdfWriter
 
 
 def make_test_image_bytes(
@@ -10,6 +11,15 @@ def make_test_image_bytes(
 ) -> bytes:
     buffer = io.BytesIO()
     Image.new("RGB", size, color).save(buffer, format="JPEG")
+    return buffer.getvalue()
+
+
+def make_test_pdf_bytes(pages: int = 1) -> bytes:
+    writer = PdfWriter()
+    for _ in range(pages):
+        writer.add_blank_page(width=200, height=200)
+    buffer = io.BytesIO()
+    writer.write(buffer)
     return buffer.getvalue()
 
 

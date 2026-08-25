@@ -14,13 +14,16 @@ from app.api.expense_filters import (
     STATUS_PATTERN,
     build_expense_conditions,
 )
+from app.core.arq import get_arq_pool
 from app.core.config import get_settings
 from app.core.deps import get_current_user, get_current_user_id, get_db, user_scoped_session
+from app.core.logging import get_logger, log_event
 from app.db.maintenance import sweep_stale_processing_rows
 from app.db.models.expense import Expense
 from app.db.models.line_item import LineItem
 from app.db.models.user import User
 from app.extraction.client import get_openai_client
+from app.extraction.duplicates import duplicate_flag_expression, is_potential_duplicate
 from app.extraction.exceptions import ExtractionFailedError, NonReceiptError
 from app.extraction.image_prep import (
     UnsupportedFileTypeError,
@@ -29,7 +32,8 @@ from app.extraction.image_prep import (
     render_pdf_first_page,
     sniff_content_type,
 )
-from app.extraction.provenance import apply_user_edits, build_initial_provenance
+from app.extraction.persistence import persist_extraction_outcome
+from app.extraction.provenance import apply_user_edits
 from app.extraction.service import extract_with_tiering
 from app.schemas.expense import (
     ExpenseListItem,
@@ -45,6 +49,7 @@ from app.usage.rate_limit import check_rate_limit
 
 router = APIRouter(prefix="/api/expenses", tags=["expenses"])
 settings = get_settings()
+logger = get_logger("expensa.upload")
 
 EXTENSION_FOR = {"image/jpeg": "jpg", "image/png": "png", "application/pdf": "pdf"}
 CHUNK_SIZE = 1024 * 1024  # 1 MiB
@@ -63,6 +68,7 @@ async def _rate_limited_user_id(
         user_id, "upload", settings.upload_rate_limit_per_hour, settings.rate_limit_window_seconds
     )
     if not allowed:
+        log_event(logger, "rate_limit_blocked", user_id=str(user_id), retry_after=retry_after)
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"Too many uploads. Try again in {retry_after}s.",
@@ -106,6 +112,7 @@ async def _to_expense_read(db: AsyncSession, expense: Expense) -> ExpenseRead:
     file_url = await presigned_get_url(expense.file_url) if expense.file_url else None
 
     base = ExpenseListItem.model_validate(expense)
+    base.is_potential_duplicate = await is_potential_duplicate(db, expense)
     return ExpenseRead(
         **base.model_dump(),
         vendor_tax_id=expense.vendor_tax_id,
@@ -130,10 +137,13 @@ async def upload_expense(
     #
     # This early quota check is a cheap, read-only fast-fail — no point
     # reading/parsing a file for a user already over quota — but it is NOT
-    # the authoritative gate (see try_increment_usage below for that).
+    # the authoritative gate (see try_increment_usage below, and the async
+    # worker's own gate for multi-page PDFs, for that).
+    log_event(logger, "upload_received", user_id=str(user_id))
     async with user_scoped_session(user_id) as session:
         current_usage = await get_current_usage(session, user_id)
     if current_usage >= settings.monthly_extraction_quota:
+        log_event(logger, "quota_blocked", user_id=str(user_id), stage="early")
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
             detail=(
@@ -151,13 +161,24 @@ async def upload_expense(
     except UnsupportedFileTypeError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
+    # Single-page images and single-page PDFs are processed inline, below,
+    # same as ever. A multi-page PDF (2..max_pdf_pages) is instead dispatched
+    # to the async worker (TRD §5.5) — render/downscale/extract all move off
+    # the request path, and the response comes back with status="processing"
+    # immediately rather than waiting.
+    is_multi_page_pdf = False
+    page_count = 1
     if content_type == "application/pdf":
-        if get_pdf_page_count(raw_bytes) > settings.max_pdf_pages:
+        page_count = get_pdf_page_count(raw_bytes)
+        if page_count > settings.max_pdf_pages:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                "Multi-page PDFs aren't supported yet — please upload a single-page document.",
+                f"PDF exceeds the {settings.max_pdf_pages}-page limit.",
             )
-        image_bytes, image_mime = render_pdf_first_page(raw_bytes)
+        if page_count > 1:
+            is_multi_page_pdf = True
+        else:
+            image_bytes, image_mime = render_pdf_first_page(raw_bytes)
     else:
         image_bytes, image_mime = raw_bytes, content_type
 
@@ -190,11 +211,30 @@ async def upload_expense(
             existing = await session.scalar(
                 select(Expense).where(Expense.file_hash == file_hash, Expense.status != "failed")
             )
+            log_event(
+                logger, "upload_idempotent_hit", expense_id=str(existing.id), status=existing.status
+            )
             return ExpenseUploadResponse(id=existing.id, status=existing.status)
 
         expense_id = inserted[0]
     # txn 1 committed; connection released here — nothing DB-related is held
-    # open across the OpenAI/MinIO calls below.
+    # open across the OpenAI/MinIO/enqueue calls below.
+
+    if is_multi_page_pdf:
+        # The raw PDF is stored now so the worker can fetch it back by key;
+        # everything else (render, downscale, quota gate, extract, persist)
+        # happens inside the job, off this request entirely.
+        await put_object(object_key, raw_bytes, content_type)
+        pool = await get_arq_pool()
+        await pool.enqueue_job("process_multi_page_pdf", str(expense_id), str(user_id), object_key)
+        log_event(
+            logger,
+            "upload_dispatched_async",
+            expense_id=str(expense_id),
+            user_id=str(user_id),
+            page_count=page_count,
+        )
+        return ExpenseUploadResponse(id=expense_id, status="processing")
 
     validated = None
     try:
@@ -209,6 +249,7 @@ async def upload_expense(
         async with user_scoped_session(user_id) as session:
             quota_ok = await try_increment_usage(session, user_id)
         if not quota_ok:
+            log_event(logger, "quota_blocked", user_id=str(user_id), stage="atomic")
             raise QuotaExceededError("Monthly extraction quota reached mid-request.")
 
         _extraction, validated = await extract_with_tiering(
@@ -224,34 +265,9 @@ async def upload_expense(
 
     # --- txn 2: persist the outcome ---
     async with user_scoped_session(user_id) as session:
-        expense = await session.get(Expense, expense_id)
-        if validated is None:
-            expense.status = "failed"
-        else:
-            expense.vendor = validated.vendor
-            expense.vendor_tax_id = validated.vendor_tax_id
-            expense.expense_date = validated.expense_date
-            expense.subtotal = validated.subtotal
-            expense.tax = validated.tax
-            expense.total = validated.total
-            expense.currency = validated.currency
-            expense.category = validated.category
-            expense.payment_method = validated.payment_method
-            expense.extracted_confidence = validated.confidence
-            expense.field_provenance = build_initial_provenance(validated)
-            expense.status = "ready"
-            for li in validated.line_items:
-                session.add(
-                    LineItem(
-                        expense_id=expense.id,
-                        description=li.description,
-                        quantity=li.quantity,
-                        unit_price=li.unit_price,
-                        amount=li.amount,
-                    )
-                )
-        await session.flush()
-        return ExpenseUploadResponse(id=expense.id, status=expense.status)
+        result_status = await persist_extraction_outcome(session, expense_id, validated)
+        log_event(logger, "upload_completed", expense_id=str(expense_id), status=result_status)
+        return ExpenseUploadResponse(id=expense_id, status=result_status)
 
 
 @router.get("", response_model=PaginatedExpenses)
@@ -291,17 +307,25 @@ async def list_expenses(
     )
 
     count_query = select(func.count()).select_from(Expense)
-    items_query = select(Expense).order_by(SORT_OPTIONS[sort])
+    items_query = select(
+        Expense, duplicate_flag_expression().label("is_potential_duplicate")
+    ).order_by(SORT_OPTIONS[sort])
     for condition in conditions:
         count_query = count_query.where(condition)
         items_query = items_query.where(condition)
 
     total = await db.scalar(count_query)
     result = await db.execute(items_query.offset((page - 1) * page_size).limit(page_size))
-    items = result.scalars().all()
+    rows = result.all()
+
+    items = []
+    for expense, is_dup in rows:
+        item = ExpenseListItem.model_validate(expense)
+        item.is_potential_duplicate = is_dup
+        items.append(item)
 
     return PaginatedExpenses(
-        items=[ExpenseListItem.model_validate(item) for item in items],
+        items=items,
         total=total or 0,
         page=page,
         page_size=page_size,

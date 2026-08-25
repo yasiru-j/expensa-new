@@ -60,6 +60,36 @@ services:
       minio:
         condition: service_healthy
 
+  # Async multi-page-PDF worker (TRD §5.5). Gated behind the "worker"
+  # Compose profile — NOT started by a bare `docker compose up`, so pytest
+  # runs never risk a real worker picking up a test-enqueued job (which
+  # would otherwise mean real OpenAI calls firing against whatever
+  # OPENAI_API_KEY happens to be configured, since Redis is shared between
+  # dev and test in this setup — only the database is split). Start it
+  # explicitly with `docker compose --profile worker up -d worker` to
+  # exercise/demo the async path. Also needs the owner DB credential (see
+  # app/db/worker_session.py) for its periodic cross-user maintenance sweep.
+  worker:
+    build: ./backend
+    profiles: ["worker"]
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL_OWNER: postgresql+asyncpg://${POSTGRES_OWNER_USER:-expensa_owner}:${POSTGRES_OWNER_PASSWORD:-changeme-owner-password}@postgres:5432/${POSTGRES_DB:-expensa}
+      DATABASE_URL_APP: postgresql+asyncpg://${POSTGRES_APP_USER:-expensa_app}:${POSTGRES_APP_PASSWORD:-changeme-app-password}@postgres:5432/${POSTGRES_DB:-expensa}
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT_URL: http://minio:9000
+    volumes:
+      - ./backend:/app
+    entrypoint: ["arq", "app.worker.WorkerSettings"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_healthy
+
   frontend:
     build: ./frontend
     env_file:

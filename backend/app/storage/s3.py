@@ -70,6 +70,19 @@ async def put_object(key: str, data: bytes, content_type: str) -> None:
     )
 
 
+async def get_object(key: str) -> bytes:
+    """Reads an object's bytes back — used by the async worker to fetch the
+    original file it needs to render/extract, since the job payload carries
+    only the object key, never the file bytes themselves."""
+    client = get_s3_client()
+
+    def _get() -> bytes:
+        response = client.get_object(Bucket=settings.s3_bucket_name, Key=key)
+        return response["Body"].read()
+
+    return await run_in_threadpool(_get)
+
+
 async def presigned_get_url(key: str, expires_in: int = 300) -> str:
     """Short-lived signed URL, browser-reachable. Callers are responsible for
     verifying the requester owns the object (in practice: only ever called

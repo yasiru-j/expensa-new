@@ -52,9 +52,12 @@ class Settings(BaseSettings):
     openai_extraction_model_escalated: str = "gpt-4o"
     model_tier_confidence_threshold: float = Field(0.7, ge=0, le=1)
 
-    # Upload guardrails — enforced before any OpenAI call
+    # Upload guardrails — enforced before any OpenAI call. A single-page PDF
+    # is processed inline; a PDF with 2..max_pdf_pages pages is dispatched to
+    # the async worker (only page 1 is ever extracted from either — this app
+    # never splits or extracts multiple receipts from one document).
     max_upload_size_bytes: int = 10 * 1024 * 1024
-    max_pdf_pages: int = 1
+    max_pdf_pages: int = 5
 
     # Cost control (TRD §8). Quota is enforced via an atomic increment-and-check
     # on the `usage` table; rate limiting via a Redis sliding window.

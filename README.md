@@ -1,159 +1,189 @@
 # Expensa
 
-AI-powered invoice/receipt extraction with a multi-user expense dashboard.
+**AI-powered invoice & receipt extraction with a multi-user expense dashboard.**
+Upload a receipt — a photo, scan, or PDF — and Expensa extracts the vendor, date, totals, tax, and line items into a searchable, per-user expense database, with a review-and-confirm step so a human always has the last word.
 
-Full spec: [docs/PRD.md](docs/PRD.md), [docs/TRD.md](docs/TRD.md), [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md).
+<!-- Add once available:
+[Live demo](https://…)  ·  [Demo video](https://…)
+-->
 
-## Stack
+---
 
-- **Backend:** FastAPI (Python 3.12), async, SQLAlchemy 2.0 + Alembic, Postgres
-- **Auth:** JWT (access + refresh), bcrypt, Google OAuth via Authlib
-- **Frontend:** React (Vite) + Tailwind + Recharts
-- **Storage:** S3-compatible (MinIO locally); Redis for jobs/rate limiting
+## Why this project
 
-## Local setup
+Most receipt-tracking dies from data-entry friction. Expensa turns "a photo of a receipt" into "a confirmed database row" in a few seconds, using a vision model for extraction while keeping the accounting-critical parts — validation, isolation, and cost control — firmly under application control.
 
-1. Copy `.env.example` to `.env` and fill in real values (never commit `.env`).
-2. `docker-compose up` — brings up Postgres, Redis, MinIO, the backend, and the frontend.
-   The backend container runs `alembic upgrade head` on startup before serving.
-3. Backend: http://localhost:8000/health · Frontend: http://localhost:5173
+It's built as a **real multi-tenant SaaS**, not a happy-path demo. The engineering effort went where it matters:
 
-### Running the backend outside Docker
+- **Proven tenant isolation, not assumed.** Postgres Row-Level Security is enforced with a dedicated non-owner database role (`expensa_app`) plus `FORCE ROW LEVEL SECURITY`, because table owners silently bypass RLS — so isolation is tested against the real database as the app's own role, at both the SQL layer and through the HTTP API.
+- **Spending strangers' money is designed out.** Every request runs `auth → rate limit → quota → file validation` *before* the paid extraction call ever happens, proven by a test asserting a rejected request makes zero API calls. Quota is gated by an atomic increment (not a race-prone read-then-write); rate limiting uses an atomic Redis sliding window.
+- **Validation over trust.** The model returns structured JSON, but arithmetic (`subtotal + tax ≈ total`), dates, and currency are all re-validated server-side; low-confidence or inconsistent extractions are flagged for human review rather than silently saved.
+- **Real concurrency correctness.** Refresh-token rotation uses an in-flight-request guard on the client and a short server-side grace window, so concurrent refreshes (e.g. two open tabs) can't race each other into a logout — with regression tests to prove it.
 
-```bash
-cd backend
-pip install -e ".[dev]"
-alembic upgrade head
-uvicorn app.main:app --reload
+Full product and engineering reasoning lives in the planning docs:
+**[PRD](docs/PRD.md)** · **[Technical Design (TRD)](docs/TRD.md)** · **[Implementation Plan](docs/IMPLEMENTATION_PLAN.md)**
+
+---
+
+## Screenshots
+
+<!-- Replace with real images once captured -->
+| Dashboard | Review & confirm | Expenses |
+|---|---|---|
+| _dashboard.png_ | _review.png_ | _table.png_ |
+
+---
+
+## Architecture
+
+```
+        ┌──────────────────────────┐
+        │       React SPA          │
+        │   (Vite + TypeScript)    │
+        └────────────┬─────────────┘
+                     │ HTTPS · JWT (access in memory,
+                     │         refresh in httpOnly cookie)
+        ┌────────────▼─────────────┐
+        │      FastAPI backend      │
+        │  auth · guardrails ·      │
+        │  extraction · validation  │
+        └───┬─────────┬────────┬────┘
+            │         │        │
+   ┌────────▼──┐  ┌───▼───┐  ┌─▼──────────────┐
+   │ Postgres  │  │ Redis │  │   OpenAI API   │
+   │  + RLS    │  │ quota │  │ (vision model) │
+   └───────────┘  │ rate  │  └────────────────┘
+        ▲         │ limit │
+        │         └───────┘
+   ┌────┴─────┐
+   │  MinIO   │   S3-compatible object storage
+   │ (files)  │   (per-user prefixes, presigned URLs)
+   └──────────┘
+
+   Multi-page PDFs are processed by a Redis-backed worker that
+   opens its own RLS-scoped DB session (sets app.user_id itself).
 ```
 
-### Running the frontend outside Docker
+---
+
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | React (Vite) + TypeScript + Tailwind CSS + Recharts |
+| Backend | FastAPI (Python 3.12, async) |
+| Auth | JWT (access + refresh), bcrypt, Google OAuth (Authlib) |
+| Data | Postgres + Row-Level Security, SQLAlchemy 2.0, Alembic |
+| Storage | S3-compatible (MinIO locally) |
+| Async / limits | Redis (worker jobs, quotas, sliding-window rate limiting) |
+| Extraction | OpenAI API (vision model, structured JSON output) |
+| Tests | pytest (async), 165 tests against real Postgres/Redis/MinIO |
+
+---
+
+## Getting started (local)
+
+### Prerequisites
+- Docker + Docker Compose
+- An OpenAI API key — **only needed to run a real extraction** (you can sign up, log in, and browse the app without one)
+
+### 1. Configure environment
+```bash
+cp .env.example .env
+```
+Open `.env` and set values. For **local development you don't need any external accounts** — Postgres, Redis, and MinIO all run as containers and configure themselves from the values you choose. The only genuinely external variable is `OPENAI_API_KEY`, and only for receipt extraction. Google OAuth variables are optional (email/password login works without them).
+
+### 2. Start the stack
+```bash
+docker compose up -d
+```
+This brings up five services: `postgres`, `redis`, `minio`, `backend`, `frontend`.
+
+### 3. Open the app
+- **Frontend:** http://localhost:5173
+- **API:** http://localhost:8000
+
+### 4. Create an account
+Sign up in the browser. Email delivery is stubbed in local dev, so the verification link is written to the backend logs rather than emailed:
+```bash
+docker compose logs -f backend   # look for the logged verification link, open it
+```
+Or verify directly (the `expensa_owner` role bypasses RLS, which `expensa_app` intentionally cannot):
+```bash
+docker compose exec postgres psql -U expensa_owner -d expensa \
+  -c "UPDATE users SET email_verified = true WHERE email = 'you@example.com';"
+```
+Then log in.
+
+> To run a real extraction, put your real `OPENAI_API_KEY` in `.env` and restart the backend (`docker compose restart backend`).
+
+---
+
+## Running the tests
 
 ```bash
-cd frontend
-npm install
-npm run dev
+docker compose exec backend pytest        # backend suite (real Postgres/Redis/MinIO)
 ```
-
-### Tests
-
-Tests run against a real Postgres database (RLS can't be verified against a mock), using a
-throwaway `<db>_test` database that's dropped and recreated each run. Postgres must be reachable
-(e.g. `docker-compose up -d postgres`).
-
 ```bash
-cd backend
-pytest
+cd frontend && npm ci && npm run build && npm run lint
 ```
 
-The security suite (`tests/security/test_rls_isolation.py`) proves that one user cannot read,
-update, delete, or insert another user's rows — even with no `WHERE user_id = ...` filter —
-because Postgres Row-Level Security enforces it at the database layer.
+The suite includes cross-tenant isolation tests at both the database and HTTP layers, guardrail-ordering tests (a rejected upload makes zero OpenAI calls), quota/rate-limit concurrency tests, and the refresh-rotation regression tests.
 
-### Linting
+---
 
-```bash
-cd backend && ruff check . && black --check .
-cd frontend && npm run lint
+## Project structure
+
+```
+expensa/
+├── docs/                 # PRD, TRD, Implementation Plan
+├── backend/              # FastAPI app, extraction, storage, Alembic, tests
+│   └── app/
+│       ├── api/          # routers: auth, expenses, dashboard, export, account
+│       ├── core/         # config, security (JWT), dependencies, logging
+│       ├── db/           # SQLAlchemy models, sessions, RLS helpers
+│       ├── extraction/   # OpenAI client, schema, validation
+│       └── worker.py     # async multi-page PDF processing
+├── frontend/             # React (Vite + TS) SPA
+├── docker-compose.yml
+└── .env.example
 ```
 
-## Security model
+---
 
-- Every authenticated request scopes its database transaction to the caller via
-  `SET LOCAL app.user_id`, read by Postgres RLS policies on `expenses`, `line_items`, and `usage`.
-- The API connects as a restricted `expensa_app` role (created by the first migration) that is
-  **not** the table owner and **not** a superuser — both would silently bypass RLS. Migrations run
-  under a separate owner role.
-- Access tokens live in memory on the client only; refresh tokens are httpOnly, Secure (in
-  production), SameSite cookies, rotated (single-use) on every refresh.
-- The OpenAI API key and all extraction calls run server-side only.
+## Security notes
 
-## Cost control & guardrails
+- **Two-role Postgres + forced RLS:** migrations run as `expensa_owner`; the app connects as the non-owner `expensa_app`, so RLS policies actually apply. Isolation is enforced by the database, not just application code.
+- **Secrets stay server-side:** the OpenAI key and DB credentials never reach the browser.
+- **Tokens:** access token in memory, refresh token in an httpOnly/SameSite cookie; single-use rotation with a short reuse grace window and out-of-window rejection.
+- **File uploads:** validated by magic bytes (not the client-declared content type), size-capped during read, stored under unguessable per-user keys and served via short-lived presigned URLs.
+- **Exports:** CSV formula-injection is neutralized; currencies are never summed across each other.
 
-Every upload passes through these, **in this order**, before any paid OpenAI call is made:
+---
 
-1. **Auth** — JWT required.
-2. **Rate limit** — Redis-backed sliding window, per user, on `/api/expenses/upload`
-   (`UPLOAD_RATE_LIMIT_PER_HOUR`, default 20/hour). Exceeding it returns `429` with a
-   `Retry-After` header.
-3. **Quota** — a cheap, non-authoritative check against the `usage` table
-   (`MONTHLY_EXTRACTION_QUOTA`, default 50/month) rejects fast if the caller is already over.
-   The **authoritative** gate is a single atomic `INSERT ... ON CONFLICT ... WHERE count < limit`
-   immediately before the paid call — two concurrent requests at the last slot can't both win,
-   because they serialize on the same database row rather than racing a read-then-write.
-4. **File validation** — type (sniffed from magic bytes, not the client-declared
-   `Content-Type`), size (`MAX_UPLOAD_SIZE_BYTES`), and page count (`MAX_PDF_PAGES`), all before
-   any network call.
-5. **Extract** — cheap model first (`OPENAI_EXTRACTION_MODEL`); escalates once to a larger model
-   (`OPENAI_EXTRACTION_MODEL_ESCALATED`) only if the cheap model's own confidence is below
-   `MODEL_TIER_CONFIDENCE_THRESHOLD` or server-side validation flags an issue. Quota is
-   incremented exactly once per upload attempt, regardless of how many underlying model calls
-   that involves.
+## Deployment
 
-**Idempotency**: a unique partial index on `(user_id, file_hash) WHERE status <> 'failed'`
-means concurrent identical uploads collapse to one row and one extraction — the database
-resolves the race, not a check in application code. A previously **failed** upload is
-excluded from that constraint on purpose, so re-uploading the same file after a failure
-retries rather than returning the stale failure.
+Local dev uses containerized MinIO and default credentials. Before any public deployment:
 
-**Stuck rows**: there's no background worker in this app yet (extraction is inline and
-synchronous), so a row that gets stuck at `processing` — a crash between the two upload
-transactions — is swept to `failed` opportunistically on the next upload or list request for
-that user, once it's older than `STALE_PROCESSING_MINUTES` (default 15). See
-`app/db/maintenance.py` for why this is a swept-on-read check rather than a scheduled job.
+- Replace every `changeme-*` secret and set a strong JWT secret.
+- Swap MinIO for a managed S3-compatible store (AWS S3, Cloudflare R2, or similar).
+- Set a hard spend cap in the OpenAI dashboard (this is an operational step, not code).
+- Wire a real email provider (or ship a seeded demo account so reviewers skip signup).
+- Set a real contact address on the Privacy/Terms pages.
 
-## Export
+---
 
-`GET /api/export` streams the caller's expenses as CSV or Excel (XLSX), owner-scoped via
-RLS and filtered identically to `GET /api/expenses` — both build their `WHERE` clause from
-the same `build_expense_conditions` helper, so the exported rows can never drift from what
-the table is currently showing for the same `status` / `date_from` / `date_to` / `category` /
-`q` params.
+## License
 
-- **Format**: a `format=csv|xlsx` query param (default `csv`) — not `Accept`-header content
-  negotiation, for consistency with every other filter on this API already being a query
-  param, and so the export is a plain linkable/downloadable URL.
-- **Currency**: every row includes its `currency` column explicitly. A totals block is
-  appended after the data rows, grouped by currency (e.g. `TOTAL (AUD)`, `TOTAL (USD)`) —
-  amounts are never summed across different currencies into one number, matching the
-  dashboard's per-currency aggregates.
-- **Numbers**: money fields are rendered from `Decimal` with `format(value, "f")` — fixed
-  notation, no scientific notation, no float artifacts (e.g. `12.34`, never `12.340000001`
-  or a locale thousands separator).
-- **CSV injection**: a text field (`vendor`, `vendor_tax_id`, `payment_method`) whose value
-  starts with `=`, `+`, `-`, or `@` is prefixed with a leading apostrophe before being
-  written — the same thing Excel does when a user manually types a value that looks like a
-  formula. This defuses formula/DDE injection from a crafted vendor name without altering
-  the visible text. Applied to both formats, though XLSX cell values written by openpyxl are
-  already typed as plain strings (not formulas) so they weren't executable there either.
-- **Encoding**: the CSV is UTF-8 with a leading BOM so Excel opens non-ASCII vendor names
-  (e.g. "Café", "日本語") correctly instead of mangling them.
-- **Line items**: excluded from the flat CSV (they don't fit a "one row per expense" shape
-  without duplicating expense rows) but included in the XLSX as a second "Line Items" sheet,
-  keyed by `expense_id` — no data is silently dropped from the richer format.
-- **Streaming**: CSV is genuinely streamed row-by-row, batched off the database (500 rows at
-  a time) inside one transaction, so the full result set is never held in memory as Python
-  objects. XLSX can't be streamed the same way — the `.xlsx` container is a zip archive
-  that's only valid once fully written — so it's built with openpyxl's `write_only` mode
-  (which still avoids holding a full worksheet object graph) into an in-memory buffer and
-  returned as one chunk.
-- **Filenames**: `expensa-expenses-YYYYMMDD.csv` / `.xlsx`, with the matching `Content-Type`
-  and a `Content-Disposition: attachment` header.
-- **Empty results**: a filter that matches nothing still returns `200` with a valid
-  headers-only file, not a `500` or an empty body.
+<!-- Choose one, e.g. MIT -->
+_TBD_
 
-The frontend's export control (next to the expenses filter bar) always sends the currently
-active filters and sort, so what downloads matches what's on screen — including the empty
-case, which downloads a valid headers-only file rather than erroring.
+---
 
-### Required manual step: provider spend cap
-
-**This is not something code can enforce** — quotas and rate limits protect against a single
-runaway user, but a hard ceiling on total spend has to be configured directly with the
-provider as the final backstop. Before exposing this app to real users:
-
-1. Log into the OpenAI platform dashboard for the account tied to `OPENAI_API_KEY`.
-2. Under the billing/usage-limits section, set a hard monthly spend limit.
-3. Confirm billing alert emails are configured.
-
-Do this for every environment (dev, staging, production) that has a real API key configured.
+<!--
+Confirm against your docker-compose.yml before publishing:
+- backend port (assumed 8000) and any exposed MinIO console port
+- exact service names (assumed: postgres, redis, minio, backend, frontend)
+- the authoritative env var list lives in .env.example — this README references it rather than duplicating it
+- test command paths if your pytest invocation differs
+-->

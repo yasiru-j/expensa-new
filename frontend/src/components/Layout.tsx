@@ -15,8 +15,12 @@ export function Layout() {
           </Link>
           {user && (
             <div className="flex items-center gap-4 text-sm text-gray-600">
-              <Link to="/account" className="hover:underline">
-                {user.email}
+              <span>{user.email}</span>
+              <Link
+                to="/account"
+                className="rounded-md border border-gray-300 px-3 py-1.5 hover:bg-gray-100"
+              >
+                Account
               </Link>
               <button
                 onClick={() => void logout()}

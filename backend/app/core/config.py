@@ -22,6 +22,15 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 30
+    # Trade-off (see app/core/refresh_tokens.py): a refresh token is normally
+    # single-use, but for this many seconds after its first use it can still
+    # be redeemed again — a legitimate client that fired two concurrent
+    # refresh requests (a StrictMode double-effect, two tabs loading at
+    # once, a flaky-network retry) gets its session back instead of being
+    # logged out. A replay after this window has elapsed is still rejected,
+    # so a stolen-and-replayed token is only viable for a few seconds after
+    # the legitimate rotation — not indefinitely.
+    refresh_token_reuse_grace_seconds: int = Field(5, ge=0)
 
     # Google OAuth
     google_client_id: str = ""

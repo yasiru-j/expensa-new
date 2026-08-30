@@ -12,7 +12,12 @@ from app.core.config import get_settings
 from app.core.cookies import REFRESH_COOKIE_NAME, clear_refresh_cookie, set_refresh_cookie
 from app.core.deps import get_current_user, get_db
 from app.core.oauth import oauth
-from app.core.refresh_tokens import pop_refresh_jti, revoke_refresh_jti, store_refresh_jti
+from app.core.refresh_tokens import (
+    claim_or_replay_rotation,
+    finalize_refresh_rotation,
+    revoke_refresh_jti,
+    store_refresh_jti,
+)
 from app.db.models.user import User
 from app.schemas.auth import (
     AccessTokenResponse,
@@ -29,12 +34,15 @@ settings = get_settings()
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-async def _issue_tokens(user_id: uuid.UUID, response: Response) -> AccessTokenResponse:
+async def _issue_tokens(user_id: uuid.UUID, response: Response) -> tuple[AccessTokenResponse, str]:
+    """Returns the response body AND the raw refresh token string — callers
+    that are finalizing a rotation (see /refresh below) need the latter to
+    record the result for a concurrent duplicate request to replay."""
     access_token = security.create_access_token(user_id)
     refresh_token, jti = security.create_refresh_token(user_id)
     await store_refresh_jti(jti, user_id)
     set_refresh_cookie(response, refresh_token)
-    return AccessTokenResponse(access_token=access_token)
+    return AccessTokenResponse(access_token=access_token), refresh_token
 
 
 @router.post("/signup", response_model=AccessTokenResponse, status_code=status.HTTP_201_CREATED)
@@ -54,7 +62,8 @@ async def signup(
     # link so the verification flow is testable end-to-end in dev.
     print(f"[dev] email verification link for {user.email}: token={verification_token}")
 
-    return await _issue_tokens(user.id, response)
+    result, _refresh_token = await _issue_tokens(user.id, response)
+    return result
 
 
 @router.post("/login", response_model=AccessTokenResponse)
@@ -69,7 +78,8 @@ async def login(
     ):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Incorrect email or password")
 
-    return await _issue_tokens(user.id, response)
+    result, _refresh_token = await _issue_tokens(user.id, response)
+    return result
 
 
 @router.post("/refresh", response_model=AccessTokenResponse)
@@ -90,17 +100,30 @@ async def refresh(
     if payload.get("type") != security.TokenType.REFRESH.value:
         raise unauthorized
 
-    # Single-use rotation: the jti is popped from Redis, so a stolen/replayed
-    # refresh token only works once.
-    stored_user_id = await pop_refresh_jti(payload["jti"])
-    if stored_user_id is None or stored_user_id != payload["sub"]:
+    # Rotation with a short reuse grace window — see
+    # app/core/refresh_tokens.py for the full policy and trade-off.
+    jti = payload["jti"]
+    claim = await claim_or_replay_rotation(jti)
+    if claim is None:
+        raise unauthorized
+
+    if "access_token" in claim:
+        # A concurrent duplicate of a request that already rotated this
+        # token within the grace window — hand back that same result
+        # instead of minting a second rotation (or rejecting this one).
+        set_refresh_cookie(response, claim["refresh_token"])
+        return AccessTokenResponse(access_token=claim["access_token"])
+
+    if claim["user_id"] != payload["sub"]:
         raise unauthorized
 
     user = await db.get(User, uuid.UUID(payload["sub"]))
     if user is None:
         raise unauthorized
 
-    return await _issue_tokens(user.id, response)
+    result, new_refresh_token = await _issue_tokens(user.id, response)
+    await finalize_refresh_rotation(jti, result.access_token, new_refresh_token)
+    return result
 
 
 @router.post("/logout", response_model=MessageResponse)
@@ -190,5 +213,5 @@ async def google_callback(request: Request, db: AsyncSession = Depends(get_db)) 
     # Cookie is set on the redirect response; the frontend then calls
     # /api/auth/refresh (credentials included) to pull an access token into memory.
     redirect = RedirectResponse(url=settings.frontend_url)
-    await _issue_tokens(user.id, redirect)
+    await _issue_tokens(user.id, redirect)  # cookie side effect only; body is unused here
     return redirect

@@ -1,5 +1,5 @@
 import { isAxiosError } from "axios";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { DashboardSummarySection } from "../components/DashboardSummarySection";
 import { ExpenseDetailModal } from "../components/ExpenseDetailModal";
@@ -9,6 +9,7 @@ import { ExportControls } from "../components/ExportControls";
 import { UploadDropzone } from "../components/UploadDropzone";
 import {
   getDashboardSummary,
+  getExpense,
   listExpenses,
   uploadExpense,
   type DashboardSummary,
@@ -18,6 +19,10 @@ import {
 } from "../lib/expenses";
 
 const PAGE_SIZE = 20;
+// Only a multi-page PDF (dispatched to the async worker) ever comes back
+// "processing" from the upload call — a single-page image or PDF is always
+// processed inline and returns "ready"/"failed" immediately, no polling.
+const POLL_INTERVAL_MS = 3000;
 
 export function Dashboard() {
   const [items, setItems] = useState<ExpenseListItem[]>([]);
@@ -31,6 +36,15 @@ export function Dashboard() {
   const [selectedExpenseId, setSelectedExpenseId] = useState<string | null>(null);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [isSummaryLoading, setIsSummaryLoading] = useState(true);
+  const [processingCount, setProcessingCount] = useState(0);
+  const pollIntervalsRef = useRef<number[]>([]);
+
+  useEffect(() => {
+    const intervals = pollIntervalsRef.current;
+    return () => {
+      intervals.forEach((id) => window.clearInterval(id));
+    };
+  }, []);
 
   const refresh = useCallback(
     async (targetPage: number, targetSort: SortOption, targetFilters: ExpenseFilters) => {
@@ -67,6 +81,36 @@ export function Dashboard() {
     void refreshSummary();
   }, [refreshSummary]);
 
+  function pollUntilProcessed(expenseId: string) {
+    setProcessingCount((n) => n + 1);
+    const intervalId = window.setInterval(() => {
+      void (async () => {
+        let done = true;
+        try {
+          const detail = await getExpense(expenseId);
+          done = detail.status !== "processing";
+        } catch {
+          done = true; // stop polling on error rather than retrying forever
+        }
+        if (!done) return;
+
+        window.clearInterval(intervalId);
+        pollIntervalsRef.current = pollIntervalsRef.current.filter((id) => id !== intervalId);
+        setProcessingCount((n) => Math.max(0, n - 1));
+        // Jump to the newest view, same as a synchronous upload completing —
+        // by the time this resolves the user may be on a different page/
+        // filter than when the upload started, and this row is what they're
+        // waiting to see.
+        setSort("created_desc");
+        setPage(1);
+        setFilters({});
+        await refresh(1, "created_desc", {});
+        await refreshSummary();
+      })();
+    }, POLL_INTERVAL_MS);
+    pollIntervalsRef.current.push(intervalId);
+  }
+
   async function handleFileSelected(file: File) {
     setUploadError(null);
     setIsUploading(true);
@@ -77,6 +121,8 @@ export function Dashboard() {
           "We couldn't extract data from that file — it may not be a clear receipt, or " +
             "something went wrong. It's still saved below; try uploading a different file.",
         );
+      } else if (result.status === "processing") {
+        pollUntilProcessed(result.id);
       }
       // Jump to the most-recently-uploaded view so the new row is visible
       // immediately, regardless of what the user was sorted/paged/filtered to before.
@@ -121,6 +167,13 @@ export function Dashboard() {
           <UploadDropzone onFileSelected={handleFileSelected} disabled={isUploading} />
         </div>
         {isUploading && <p className="mt-2 text-sm text-gray-500">Uploading and extracting…</p>}
+        {processingCount > 0 && (
+          <p className="mt-2 text-sm text-gray-500" role="status">
+            {processingCount === 1
+              ? "Processing a multi-page PDF in the background — this can take a moment."
+              : `Processing ${processingCount} multi-page PDFs in the background — this can take a moment.`}
+          </p>
+        )}
         {uploadError && <p className="mt-2 text-sm text-red-600">{uploadError}</p>}
       </div>
 

@@ -36,6 +36,9 @@ export interface ExpenseListItem {
   status: ExpenseStatus;
   extracted_confidence: string | null;
   created_at: string;
+  // True when another of the caller's expenses shares vendor + expense_date
+  // + total — a warning, never a block.
+  is_potential_duplicate: boolean;
 }
 
 // The scalar fields tracked in field_provenance and editable via PATCH.

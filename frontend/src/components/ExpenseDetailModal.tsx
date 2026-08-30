@@ -147,7 +147,17 @@ export function ExpenseDetailModal({ expenseId, onClose, onUpdated }: ExpenseDet
         {detail && formValues && (
           <div className="grid gap-6 sm:grid-cols-2">
             <div className="space-y-4 text-sm">
-              <StatusBadge status={detail.status} />
+              <div className="flex items-center gap-2">
+                <StatusBadge status={detail.status} />
+                {detail.is_potential_duplicate && (
+                  <span
+                    title="Another expense has the same vendor, date, and total"
+                    className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700"
+                  >
+                    Possible duplicate
+                  </span>
+                )}
+              </div>
 
               <div className="space-y-3">
                 {EDITABLE_FIELDS.map((field) => (

@@ -80,7 +80,19 @@ export function ExpensesTable({
                   onClick={() => onRowClick(item.id)}
                   className="cursor-pointer hover:bg-gray-50"
                 >
-                  <td className="px-4 py-2 text-gray-900">{item.vendor ?? "—"}</td>
+                  <td className="px-4 py-2 text-gray-900">
+                    <div className="flex items-center gap-2">
+                      {item.vendor ?? "—"}
+                      {item.is_potential_duplicate && (
+                        <span
+                          title="Another expense has the same vendor, date, and total"
+                          className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700"
+                        >
+                          Possible duplicate
+                        </span>
+                      )}
+                    </div>
+                  </td>
                   <td className="px-4 py-2 text-gray-600">{item.expense_date ?? "—"}</td>
                   <td className="px-4 py-2 text-gray-900">{formatAmount(item.total, item.currency)}</td>
                   <td className="px-4 py-2 text-gray-600">{item.category ?? "—"}</td>

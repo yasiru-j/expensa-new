@@ -1,12 +1,13 @@
 import { Link, Outlet } from "react-router-dom";
 
 import { useAuth } from "../lib/auth";
+import { Footer } from "./Footer";
 
 export function Layout() {
   const { user, logout } = useAuth();
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="flex min-h-screen flex-col bg-gray-50">
       <header className="border-b border-gray-200 bg-white">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
           <Link to="/" className="text-lg font-semibold text-gray-900">
@@ -27,9 +28,10 @@ export function Layout() {
           )}
         </div>
       </header>
-      <main className="mx-auto max-w-5xl px-6 py-8">
+      <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-8">
         <Outlet />
       </main>
+      <Footer />
     </div>
   );
 }

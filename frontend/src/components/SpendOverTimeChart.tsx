@@ -21,9 +21,9 @@ export function SpendOverTimeChart({ data, currency }: SpendOverTimeChartProps) 
 
   return (
     <div>
-      <h3 className="mb-2 text-sm font-medium text-gray-700">Spend over time ({currency})</h3>
+      <h2 className="mb-2 text-sm font-medium text-gray-700">Spend over time ({currency})</h2>
       {points.length === 0 ? (
-        <div className="flex h-60 items-center justify-center rounded-lg border border-dashed border-gray-300 text-gray-400">
+        <div className="flex h-60 items-center justify-center rounded-lg border border-dashed border-gray-300 text-gray-600">
           No confirmed spending yet.
         </div>
       ) : (

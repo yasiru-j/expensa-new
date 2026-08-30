@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   CATEGORIES,
@@ -55,6 +55,52 @@ export function ExpenseDetailModal({ expenseId, onClose, onUpdated }: ExpenseDet
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  const FOCUSABLE_SELECTOR =
+    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+  // Keyboard/AT users get a full dialog contract even though the backdrop's
+  // click-to-close (below) is mouse-only: Escape closes from anywhere, Tab
+  // is trapped inside the panel (this view can have as little as one
+  // focusable element — the Close button, for a non-editable "confirmed"
+  // expense — so without wrapping, Tab would walk straight out into the
+  // page behind an still-open dialog), and focus moves onto the dialog on
+  // open and back to whatever triggered it on close.
+  useEffect(() => {
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    panelRef.current?.focus();
+
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (e.key !== "Tab" || !panelRef.current) return;
+
+      const focusable = Array.from(
+        panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+      );
+      if (focusable.length === 0) {
+        e.preventDefault();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      previouslyFocused?.focus();
+    };
+  }, [onClose]);
 
   useEffect(() => {
     let cancelled = false;
@@ -126,23 +172,35 @@ export function ExpenseDetailModal({ expenseId, onClose, onUpdated }: ExpenseDet
   }
 
   return (
+    // Backdrop click-to-close is a mouse-only convenience — Escape (handled
+    // in the effect above) and the Close button below give keyboard/AT
+    // users the same result, so this one handler is deliberately exempt.
+    // eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={onClose}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
     >
       <div
-        className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-lg bg-white p-6 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="expense-detail-title"
+        tabIndex={-1}
+        className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-lg bg-white p-6 shadow-xl focus:outline-none"
       >
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-lg font-semibold text-gray-900">Expense detail</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600" aria-label="Close">
+          <h3 id="expense-detail-title" className="text-lg font-semibold text-gray-900">
+            Expense detail
+          </h3>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-700" aria-label="Close">
             ✕
           </button>
         </div>
 
         {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
-        {!detail && !error && <p className="text-gray-400">Loading…</p>}
+        {!detail && !error && <p className="text-gray-600">Loading…</p>}
 
         {detail && formValues && (
           <div className="grid gap-6 sm:grid-cols-2">
@@ -210,7 +268,7 @@ export function ExpenseDetailModal({ expenseId, onClose, onUpdated }: ExpenseDet
 
             <div>
               {!detail.file_url ? (
-                <p className="text-gray-400">No preview available.</p>
+                <p className="text-gray-600">No preview available.</p>
               ) : isPdf ? (
                 <a
                   href={detail.file_url}

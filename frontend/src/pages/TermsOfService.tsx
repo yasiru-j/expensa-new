@@ -5,7 +5,7 @@ const CONTACT_EMAIL = "support@expensa.app";
 
 export function TermsOfService() {
   return (
-    <div className="mx-auto max-w-2xl px-6 py-12 text-sm text-gray-700">
+    <main className="mx-auto max-w-2xl px-6 py-12 text-sm text-gray-700">
       <Link to="/" className="text-gray-500 hover:underline">
         ← Back
       </Link>
@@ -104,6 +104,6 @@ export function TermsOfService() {
           </p>
         </section>
       </div>
-    </div>
+    </main>
   );
 }

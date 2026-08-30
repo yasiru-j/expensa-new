@@ -61,7 +61,7 @@ export function AccountPage() {
       <section className="space-y-3">
         <h2 className="text-lg font-medium text-gray-900">Usage this month</h2>
         {isUsageLoading ? (
-          <div className="rounded-lg border border-gray-200 p-10 text-center text-gray-400">
+          <div className="rounded-lg border border-gray-200 p-10 text-center text-gray-600">
             Loading…
           </div>
         ) : usage ? (
@@ -71,7 +71,7 @@ export function AccountPage() {
             <StatTile label="Remaining" value={String(usage.remaining)} />
           </div>
         ) : (
-          <p className="text-sm text-gray-400">Couldn't load usage.</p>
+          <p className="text-sm text-gray-600">Couldn't load usage.</p>
         )}
       </section>
 

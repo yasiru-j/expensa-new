@@ -36,7 +36,7 @@ interface DashboardSummarySectionProps {
 export function DashboardSummarySection({ summary, isLoading }: DashboardSummarySectionProps) {
   if (isLoading || !summary) {
     return (
-      <div className="rounded-lg border border-gray-200 p-10 text-center text-gray-400">
+      <div className="rounded-lg border border-gray-200 p-10 text-center text-gray-600">
         Loading dashboard…
       </div>
     );
@@ -69,7 +69,7 @@ export function DashboardSummarySection({ summary, isLoading }: DashboardSummary
       </div>
 
       {otherCurrencies.length > 0 && (
-        <p className="text-xs text-gray-400">
+        <p className="text-xs text-gray-600">
           Showing {primaryCurrency} — you also have confirmed expenses in{" "}
           {otherCurrencies.join(", ")}, not included in the charts below.
         </p>
@@ -81,7 +81,7 @@ export function DashboardSummarySection({ summary, isLoading }: DashboardSummary
           <SpendByCategoryChart data={summary.by_category} currency={primaryCurrency} />
         </div>
       ) : (
-        <div className="rounded-lg border border-dashed border-gray-300 p-10 text-center text-gray-400">
+        <div className="rounded-lg border border-dashed border-gray-300 p-10 text-center text-gray-600">
           No confirmed expenses yet — once you review and confirm a receipt, your spending
           insights will show up here.
         </div>

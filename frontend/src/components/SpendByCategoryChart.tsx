@@ -27,9 +27,9 @@ export function SpendByCategoryChart({ data, currency }: SpendByCategoryChartPro
 
   return (
     <div>
-      <h3 className="mb-2 text-sm font-medium text-gray-700">Spend by category ({currency})</h3>
+      <h2 className="mb-2 text-sm font-medium text-gray-700">Spend by category ({currency})</h2>
       {bars.length === 0 ? (
-        <div className="flex h-40 items-center justify-center rounded-lg border border-dashed border-gray-300 text-gray-400">
+        <div className="flex h-40 items-center justify-center rounded-lg border border-dashed border-gray-300 text-gray-600">
           No confirmed spending yet.
         </div>
       ) : (

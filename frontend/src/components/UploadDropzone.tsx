@@ -47,6 +47,8 @@ export function UploadDropzone({ onFileSelected, disabled = false }: UploadDropz
 
   return (
     <div className="space-y-2">
+      {/* No nested <button> in here (a11y: interactive controls must not be
+          nested) — "Take a photo" lives outside this role="button" area. */}
       <div
         onDragOver={(e) => {
           e.preventDefault();
@@ -55,8 +57,15 @@ export function UploadDropzone({ onFileSelected, disabled = false }: UploadDropz
         onDragLeave={() => setIsDragging(false)}
         onDrop={handleDrop}
         onClick={() => !disabled && browseInputRef.current?.click()}
+        onKeyDown={(e) => {
+          if ((e.key === "Enter" || e.key === " ") && !disabled) {
+            e.preventDefault();
+            browseInputRef.current?.click();
+          }
+        }}
         role="button"
         tabIndex={0}
+        aria-label="Upload a receipt: drag and drop, or click to browse"
         className={`flex cursor-pointer flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed p-10 text-center transition-colors ${
           isDragging ? "border-gray-900 bg-gray-50" : "border-gray-300"
         } ${disabled ? "pointer-events-none opacity-50" : ""}`}
@@ -64,15 +73,15 @@ export function UploadDropzone({ onFileSelected, disabled = false }: UploadDropz
         <p className="text-gray-700">
           <span className="font-medium">Drag and drop</span> a receipt, or click to browse
         </p>
-        <p className="text-xs text-gray-400">JPEG, PNG, or a single-page PDF — up to {MAX_SIZE_MB}MB</p>
+        <p className="text-xs text-gray-600">JPEG, PNG, or a single-page PDF — up to {MAX_SIZE_MB}MB</p>
+      </div>
+
+      <div className="flex justify-center">
         <button
           type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            cameraInputRef.current?.click();
-          }}
+          onClick={() => cameraInputRef.current?.click()}
           disabled={disabled}
-          className="mt-1 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-50"
+          className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-50"
         >
           Take a photo
         </button>

@@ -43,7 +43,11 @@ export function ExpensesTable({
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-gray-900">Expenses</h2>
+        <label htmlFor="expenses-sort" className="sr-only">
+          Sort expenses
+        </label>
         <select
+          id="expenses-sort"
           value={sort}
           onChange={(e) => onSortChange(e.target.value as SortOption)}
           className="rounded-md border border-gray-300 px-2 py-1 text-sm text-gray-700"
@@ -56,9 +60,9 @@ export function ExpensesTable({
       </div>
 
       {isLoading ? (
-        <div className="rounded-lg border border-gray-200 p-10 text-center text-gray-400">Loading…</div>
+        <div className="rounded-lg border border-gray-200 p-10 text-center text-gray-600">Loading…</div>
       ) : items.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-gray-300 p-10 text-center text-gray-400">
+        <div className="rounded-lg border border-dashed border-gray-300 p-10 text-center text-gray-600">
           No expenses yet — upload a receipt above to get started.
         </div>
       ) : (
@@ -78,7 +82,15 @@ export function ExpensesTable({
                 <tr
                   key={item.id}
                   onClick={() => onRowClick(item.id)}
-                  className="cursor-pointer hover:bg-gray-50"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onRowClick(item.id);
+                    }
+                  }}
+                  tabIndex={0}
+                  aria-label={`View details for ${item.vendor ?? "expense"} on ${item.expense_date ?? "unknown date"}`}
+                  className="cursor-pointer hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-gray-400"
                 >
                   <td className="px-4 py-2 text-gray-900">
                     <div className="flex items-center gap-2">

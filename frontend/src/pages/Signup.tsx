@@ -34,7 +34,7 @@ export function Signup() {
 
   return (
     <div className="flex min-h-screen flex-col bg-gray-50">
-      <div className="flex flex-1 items-center justify-center px-4">
+      <main className="flex flex-1 items-center justify-center px-4">
         <div className="w-full max-w-sm space-y-6">
           <h1 className="text-center text-2xl font-semibold text-gray-900">Create your account</h1>
 
@@ -80,7 +80,7 @@ export function Signup() {
             </button>
           </form>
 
-          <p className="text-center text-xs text-gray-400">
+          <p className="text-center text-xs text-gray-600">
             By signing up, you agree to our{" "}
             <Link to="/terms" className="hover:underline">
               Terms of Service
@@ -99,7 +99,7 @@ export function Signup() {
             </Link>
           </p>
         </div>
-      </div>
+      </main>
       <Footer />
     </div>
   );

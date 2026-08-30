@@ -39,6 +39,10 @@ os.environ["DATABASE_URL_APP"] = _with_test_db(
     )
 )
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-not-for-production-use")
+# Short enough that "replay outside the grace window" tests don't need a
+# multi-second sleep, long enough that the concurrent-refresh test (which
+# doesn't sleep at all) is nowhere near it.
+os.environ.setdefault("REFRESH_TOKEN_REUSE_GRACE_SECONDS", "1")
 os.environ.setdefault(
     "POSTGRES_APP_PASSWORD", _get("POSTGRES_APP_PASSWORD", "changeme-app-password")
 )

@@ -1,6 +1,11 @@
+import asyncio
+
 from httpx import AsyncClient
 
+from app.core.config import get_settings
+
 REFRESH_COOKIE = "refresh_token"
+settings = get_settings()
 
 
 async def test_signup_returns_access_token_and_sets_refresh_cookie(client: AsyncClient) -> None:
@@ -81,7 +86,41 @@ async def test_refresh_rotates_the_access_token(client: AsyncClient) -> None:
     assert resp.json()["access_token"] != original_access_token
 
 
-async def test_refresh_token_is_single_use(client: AsyncClient) -> None:
+async def test_concurrent_refresh_with_same_token_does_not_log_the_session_out(
+    client: AsyncClient,
+) -> None:
+    """Regression test for the real bug this rotation policy exists to fix:
+    two refresh requests firing at once with the same starting cookie (a
+    React StrictMode double-effect, two tabs loading together, a retried
+    request) must not log the user out. Exactly one rotation happens —
+    the other request gets that same result back, not a second rotation
+    and not a 401."""
+    await client.post(
+        "/api/auth/signup", json={"email": "ivan@example.com", "password": "hunter22222"}
+    )
+
+    first, second = await asyncio.gather(
+        client.post("/api/auth/refresh"),
+        client.post("/api/auth/refresh"),
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    # Both requests observed the SAME rotation, not two independent ones.
+    assert first.json()["access_token"] == second.json()["access_token"]
+    assert first.cookies.get(REFRESH_COOKIE) == second.cookies.get(REFRESH_COOKIE)
+
+    # And the session keeps working afterward with the tokens it got back.
+    me = await client.get(
+        "/api/auth/me", headers={"Authorization": f"Bearer {first.json()['access_token']}"}
+    )
+    assert me.status_code == 200
+
+
+async def test_refresh_token_replay_within_grace_window_is_allowed(client: AsyncClient) -> None:
+    """A sequential (non-concurrent) replay shortly after rotation is
+    exactly the same case as the concurrent one above, just spaced out —
+    still within the grace window, still allowed, still the same result."""
     await client.post(
         "/api/auth/signup", json={"email": "grace@example.com", "password": "hunter22222"}
     )
@@ -90,7 +129,28 @@ async def test_refresh_token_is_single_use(client: AsyncClient) -> None:
     first = await client.post("/api/auth/refresh")
     assert first.status_code == 200
 
-    # Replay the pre-rotation refresh token — it must already be dead.
+    client.cookies.set(REFRESH_COOKIE, old_refresh_cookie)
+    replay = await client.post("/api/auth/refresh")
+
+    assert replay.status_code == 200
+    assert replay.json()["access_token"] == first.json()["access_token"]
+
+
+async def test_refresh_token_replay_outside_grace_window_is_rejected(
+    client: AsyncClient,
+) -> None:
+    """Theft-detection guarantee: once the grace window has elapsed, a
+    replayed pre-rotation token is dead — same as strict single-use."""
+    await client.post(
+        "/api/auth/signup", json={"email": "heidi-replay@example.com", "password": "hunter22222"}
+    )
+    old_refresh_cookie = client.cookies.get(REFRESH_COOKIE)
+
+    first = await client.post("/api/auth/refresh")
+    assert first.status_code == 200
+
+    await asyncio.sleep(settings.refresh_token_reuse_grace_seconds + 0.5)
+
     client.cookies.set(REFRESH_COOKIE, old_refresh_cookie)
     replay = await client.post("/api/auth/refresh")
 

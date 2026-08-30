@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 
-import { api, setAccessToken, setOnSessionExpired } from "./api";
+import { api, refreshAccessToken, setAccessToken, setOnSessionExpired } from "./api";
 
 export interface User {
   id: string;
@@ -43,19 +43,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     // Rehydrate the in-memory access token from the httpOnly refresh cookie
-    // on first load (e.g. after a page refresh).
+    // on first load (e.g. after a page refresh). Goes through the shared
+    // refreshAccessToken() (not a raw api.post call) so React StrictMode's
+    // double-invoked mount effect produces exactly one /api/auth/refresh
+    // call, not two racing ones — see api.ts for why that used to log
+    // people out. `cancelled` just guards against setting state from a
+    // stale invocation after cleanup; it doesn't prevent the double call
+    // (the shared in-flight promise already does that).
+    let cancelled = false;
     (async () => {
       try {
-        const res = await api.post<{ access_token: string }>("/api/auth/refresh");
-        setAccessToken(res.data.access_token);
+        const token = await refreshAccessToken();
+        if (cancelled) return;
+        setAccessToken(token);
         setUser(await fetchCurrentUser());
       } catch {
+        if (cancelled) return;
         setAccessToken(null);
         setUser(null);
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const signup = useCallback(async (email: string, password: string) => {

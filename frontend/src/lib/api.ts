@@ -38,7 +38,16 @@ interface RetriableConfig extends InternalAxiosRequestConfig {
 
 let refreshPromise: Promise<string> | null = null;
 
-async function refreshAccessToken(): Promise<string> {
+// Every caller — the 401 retry below AND AuthProvider's refresh-on-mount
+// effect in auth.tsx — goes through this one function, so N concurrent
+// triggers within this tab (React StrictMode's double-invoked mount
+// effect chief among them) collapse into exactly ONE /api/auth/refresh
+// call; every caller awaits the same promise and gets the same result.
+// This does NOT by itself cover two separate browser tabs racing each
+// other (each tab has its own JS heap, so its own independent promise) —
+// that case is handled server-side by the rotation grace window in
+// app/core/refresh_tokens.py.
+export async function refreshAccessToken(): Promise<string> {
   refreshPromise ??= api
     .post<{ access_token: string }>("/api/auth/refresh")
     .then((res) => res.data.access_token)

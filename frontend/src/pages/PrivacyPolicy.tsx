@@ -1,7 +1,6 @@
 import { Link } from "react-router-dom";
 
-// Placeholder — replace with a real support address before deploying.
-const CONTACT_EMAIL = "support@expensa.app";
+const CONTACT_EMAIL = "hi@yasiruj.com";
 
 export function PrivacyPolicy() {
   return (

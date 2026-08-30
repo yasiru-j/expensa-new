@@ -2,17 +2,22 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { StatTile } from "../components/StatTile";
-import { deleteAccount, getUsage, type UsageRead } from "../lib/account";
+import { deleteAccount, getUsage, updateAccount, type UsageRead } from "../lib/account";
 import { useAuth } from "../lib/auth";
 
 const DELETE_CONFIRMATION_TEXT = "DELETE";
 
 export function AccountPage() {
-  const { user, logout } = useAuth();
+  const { user, logout, refreshUser } = useAuth();
   const navigate = useNavigate();
 
   const [usage, setUsage] = useState<UsageRead | null>(null);
   const [isUsageLoading, setIsUsageLoading] = useState(true);
+
+  const [fullName, setFullName] = useState("");
+  const [isSavingName, setIsSavingName] = useState(false);
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [nameSaved, setNameSaved] = useState(false);
 
   const [confirmText, setConfirmText] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
@@ -31,6 +36,31 @@ export function AccountPage() {
       cancelled = true;
     };
   }, []);
+
+  // Seed the editable field from the loaded user, once — not on every
+  // `user` change, so the input doesn't get clobbered mid-edit by the
+  // refreshUser() call this same form triggers on save.
+  useEffect(() => {
+    if (user) setFullName(user.full_name ?? "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user === null]);
+
+  const isNameDirty = fullName.trim() !== (user?.full_name ?? "");
+
+  async function handleSaveName() {
+    setNameError(null);
+    setNameSaved(false);
+    setIsSavingName(true);
+    try {
+      await updateAccount(fullName.trim() || null);
+      await refreshUser();
+      setNameSaved(true);
+    } catch {
+      setNameError("Couldn't save your name. Please try again.");
+    } finally {
+      setIsSavingName(false);
+    }
+  }
 
   async function handleDeleteAccount() {
     setDeleteError(null);
@@ -53,8 +83,39 @@ export function AccountPage() {
 
       <section className="space-y-3">
         <h2 className="text-lg font-medium text-gray-900">Profile</h2>
-        <div className="rounded-lg border border-gray-200 bg-white p-4 text-sm text-gray-700">
-          {user?.email}
+        <div className="space-y-4 rounded-lg border border-gray-200 bg-white p-4">
+          <div>
+            <span className="block text-xs font-medium text-gray-500">Email</span>
+            <p className="text-sm text-gray-700">{user?.email}</p>
+          </div>
+
+          <div>
+            <label htmlFor="full-name" className="block text-xs font-medium text-gray-500">
+              Full name
+            </label>
+            <div className="mt-1 flex max-w-sm items-center gap-2">
+              <input
+                id="full-name"
+                type="text"
+                value={fullName}
+                onChange={(e) => {
+                  setFullName(e.target.value);
+                  setNameSaved(false);
+                }}
+                placeholder="Not set"
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-gray-500 focus:outline-none"
+              />
+              <button
+                onClick={() => void handleSaveName()}
+                disabled={!isNameDirty || isSavingName}
+                className="whitespace-nowrap rounded-md bg-gray-900 px-3 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-40"
+              >
+                {isSavingName ? "Saving…" : "Save"}
+              </button>
+            </div>
+            {nameError && <p className="mt-1 text-sm text-red-600">{nameError}</p>}
+            {nameSaved && !isNameDirty && <p className="mt-1 text-sm text-green-700">Saved.</p>}
+          </div>
         </div>
       </section>
 

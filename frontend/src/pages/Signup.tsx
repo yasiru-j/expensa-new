@@ -9,6 +9,7 @@ import { useAuth } from "../lib/auth";
 export function Signup() {
   const { signup } = useAuth();
   const navigate = useNavigate();
+  const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -19,7 +20,7 @@ export function Signup() {
     setError(null);
     setIsSubmitting(true);
     try {
-      await signup(email, password);
+      await signup(email, password, fullName);
       navigate("/", { replace: true });
     } catch (err) {
       if (isAxiosError(err) && err.response?.status === 409) {
@@ -39,6 +40,19 @@ export function Signup() {
           <h1 className="text-center text-2xl font-semibold text-gray-900">Create your account</h1>
 
           <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label htmlFor="fullName" className="block text-sm font-medium text-gray-700">
+                Full name <span className="font-normal text-gray-500">(optional)</span>
+              </label>
+              <input
+                id="fullName"
+                type="text"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 focus:border-gray-500 focus:outline-none"
+              />
+            </div>
+
             <div>
               <label htmlFor="email" className="block text-sm font-medium text-gray-700">
                 Email

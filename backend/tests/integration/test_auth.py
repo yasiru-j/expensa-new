@@ -31,6 +31,31 @@ async def test_signup_rejects_duplicate_email(client: AsyncClient) -> None:
     assert resp.status_code == 409
 
 
+async def test_signup_stores_optional_full_name(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/api/auth/signup",
+        json={
+            "email": "jan@example.com",
+            "password": "hunter22222",
+            "full_name": "Jan Example",
+        },
+    )
+    access_token = resp.json()["access_token"]
+
+    me = await client.get("/api/auth/me", headers={"Authorization": f"Bearer {access_token}"})
+    assert me.json()["full_name"] == "Jan Example"
+
+
+async def test_signup_without_full_name_leaves_it_null(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/api/auth/signup", json={"email": "kim@example.com", "password": "hunter22222"}
+    )
+    access_token = resp.json()["access_token"]
+
+    me = await client.get("/api/auth/me", headers={"Authorization": f"Bearer {access_token}"})
+    assert me.json()["full_name"] is None
+
+
 async def test_login_with_correct_credentials_succeeds(client: AsyncClient) -> None:
     await client.post(
         "/api/auth/signup", json={"email": "carol@example.com", "password": "hunter22222"}

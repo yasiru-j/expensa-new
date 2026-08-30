@@ -13,6 +13,7 @@ import { api, refreshAccessToken, setAccessToken, setOnSessionExpired } from "./
 export interface User {
   id: string;
   email: string;
+  full_name: string | null;
   email_verified: boolean;
   created_at: string;
 }
@@ -20,9 +21,12 @@ export interface User {
 interface AuthContextValue {
   user: User | null;
   isLoading: boolean;
-  signup: (email: string, password: string) => Promise<void>;
+  signup: (email: string, password: string, fullName?: string) => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  /** Re-fetches the current user — call after PATCH /api/account so the
+   * header and anywhere else `user` is read reflect the change immediately. */
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -70,10 +74,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const signup = useCallback(async (email: string, password: string) => {
+  const signup = useCallback(async (email: string, password: string, fullName?: string) => {
     const res = await api.post<{ access_token: string }>("/api/auth/signup", {
       email,
       password,
+      full_name: fullName || undefined,
     });
     setAccessToken(res.data.access_token);
     setUser(await fetchCurrentUser());
@@ -97,9 +102,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const refreshUser = useCallback(async () => {
+    setUser(await fetchCurrentUser());
+  }, []);
+
   const value = useMemo(
-    () => ({ user, isLoading, signup, login, logout }),
-    [user, isLoading, signup, login, logout],
+    () => ({ user, isLoading, signup, login, logout, refreshUser }),
+    [user, isLoading, signup, login, logout, refreshUser],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

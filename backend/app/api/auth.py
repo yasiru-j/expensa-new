@@ -53,7 +53,11 @@ async def signup(
     if existing is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered")
 
-    user = User(email=body.email, password_hash=security.hash_password(body.password))
+    user = User(
+        email=body.email,
+        password_hash=security.hash_password(body.password),
+        full_name=body.full_name,
+    )
     db.add(user)
     await db.flush()
 
@@ -205,7 +209,10 @@ async def google_callback(request: Request, db: AsyncSession = Depends(get_db)) 
     user = await db.scalar(select(User).where(User.email == email))
     if user is None:
         user = User(
-            email=email, password_hash=None, email_verified=bool(userinfo.get("email_verified"))
+            email=email,
+            password_hash=None,
+            email_verified=bool(userinfo.get("email_verified")),
+            full_name=userinfo.get("name"),
         )
         db.add(user)
         await db.flush()

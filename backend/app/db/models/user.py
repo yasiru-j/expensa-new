@@ -16,6 +16,7 @@ class User(Base):
     )
     email: Mapped[str] = mapped_column(CITEXT, unique=True, nullable=False)
     password_hash: Mapped[str | None] = mapped_column(nullable=True)
+    full_name: Mapped[str | None] = mapped_column(nullable=True)
     email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

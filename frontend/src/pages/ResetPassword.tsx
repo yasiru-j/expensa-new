@@ -1,13 +1,28 @@
 import { useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
+import { AuthHeader } from "../components/AuthHeader";
+import { Footer } from "../components/Footer";
+import { Button } from "../components/ui/Button";
+import { GlassCard } from "../components/ui/GlassCard";
+import { FIELD_INPUT, FIELD_LABEL } from "../lib/formStyles";
 import { api } from "../lib/api";
 
 export function ResetPassword() {
   const [searchParams] = useSearchParams();
   const token = searchParams.get("token");
 
-  return token ? <ConfirmResetForm token={token} /> : <RequestResetForm />;
+  return (
+    <div className="flex min-h-screen flex-col">
+      <AuthHeader />
+      <main className="flex flex-1 items-center justify-center px-4 pb-10 pt-2">
+        <div className="w-full max-w-[440px] animate-rise">
+          {token ? <ConfirmResetForm token={token} /> : <RequestResetForm />}
+        </div>
+      </main>
+      <Footer />
+    </div>
+  );
 }
 
 function RequestResetForm() {
@@ -27,45 +42,48 @@ function RequestResetForm() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
-      <div className="w-full max-w-sm space-y-6">
-        <h1 className="text-center text-2xl font-semibold text-gray-900">Reset your password</h1>
+    <GlassCard variant="auth" className="p-8 sm:p-9">
+      <h1 className="text-[23px] font-bold tracking-tight text-ink-900">Reset your password</h1>
+      <p className="mb-6 mt-1.5 text-sm leading-relaxed text-ink-600">
+        We will email you a link that stays valid for 30 minutes.
+      </p>
 
-        {message ? (
-          <p className="text-center text-sm text-gray-600">{message}</p>
-        ) : (
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700">
-                Email
-              </label>
-              <input
-                id="email"
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 focus:border-gray-500 focus:outline-none"
-              />
-            </div>
+      {message && (
+        <div className="mb-5 flex items-start gap-2.5 rounded-2xl border border-emerald-600/[0.26] bg-emerald-600/[0.09] px-3.5 py-3">
+          <span className="mt-1.5 h-[7px] w-[7px] flex-none rounded-full bg-emerald-600" />
+          <p className="text-[13px] font-medium leading-relaxed text-emerald-800">{message}</p>
+        </div>
+      )}
 
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="w-full rounded-md bg-gray-900 px-3 py-2 text-white hover:bg-gray-800 disabled:opacity-50"
-            >
-              {isSubmitting ? "Sending…" : "Send reset link"}
-            </button>
-          </form>
-        )}
+      {!message && (
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label htmlFor="email" className={FIELD_LABEL}>
+              Email
+            </label>
+            <input
+              id="email"
+              type="email"
+              required
+              placeholder="you@company.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className={FIELD_INPUT}
+            />
+          </div>
 
-        <p className="text-center text-sm text-gray-500">
-          <Link to="/login" className="hover:underline">
-            Back to log in
-          </Link>
-        </p>
-      </div>
-    </main>
+          <Button type="submit" variant="primary" disabled={isSubmitting} className="w-full">
+            {isSubmitting ? "Sending…" : "Send reset link"}
+          </Button>
+        </form>
+      )}
+
+      <p className="mt-5 text-center text-sm text-ink-600">
+        <Link to="/login" className="font-semibold text-brand-blue hover:underline">
+          Back to log in
+        </Link>
+      </p>
+    </GlassCard>
   );
 }
 
@@ -88,50 +106,51 @@ function ConfirmResetForm({ token }: { token: string }) {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
-      <div className="w-full max-w-sm space-y-6">
-        <h1 className="text-center text-2xl font-semibold text-gray-900">Set a new password</h1>
+    <GlassCard variant="auth" className="p-8 sm:p-9">
+      <div className="mb-2.5 font-mono text-[11px] uppercase tracking-[0.14em] text-ink-600">
+        Secure link verified
+      </div>
+      <h1 className="text-[23px] font-bold tracking-tight text-ink-900">Set a new password</h1>
 
-        {status === "success" ? (
-          <p className="text-center text-sm text-gray-600">
-            Password updated.{" "}
-            <Link to="/login" className="hover:underline">
-              Log in
-            </Link>
-          </p>
-        ) : (
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700">
-                New password
-              </label>
-              <input
-                id="password"
-                type="password"
-                required
-                minLength={8}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 focus:border-gray-500 focus:outline-none"
-              />
-            </div>
+      {status === "success" ? (
+        <p className="mt-5 text-center text-sm text-ink-600">
+          Password updated.{" "}
+          <Link to="/login" className="font-semibold text-brand-blue hover:underline">
+            Log in
+          </Link>
+        </p>
+      ) : (
+        <form onSubmit={handleSubmit} className="mt-5 space-y-4">
+          <div>
+            <label htmlFor="password" className={FIELD_LABEL}>
+              New password
+            </label>
+            <input
+              id="password"
+              type="password"
+              required
+              minLength={8}
+              placeholder="At least 8 characters"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className={FIELD_INPUT}
+            />
+          </div>
 
-            {status === "error" && (
-              <p className="text-sm text-red-600">
+          {status === "error" && (
+            <div className="flex items-start gap-2.5 rounded-2xl border border-rose-600/[0.24] bg-rose-600/[0.08] px-3.5 py-2.5">
+              <span className="mt-1.5 h-[7px] w-[7px] flex-none rounded-full bg-rose-600" />
+              <p className="text-[13px] font-medium leading-relaxed text-rose-800">
                 That reset link is invalid or has expired.
               </p>
-            )}
+            </div>
+          )}
 
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="w-full rounded-md bg-gray-900 px-3 py-2 text-white hover:bg-gray-800 disabled:opacity-50"
-            >
-              {isSubmitting ? "Updating…" : "Update password"}
-            </button>
-          </form>
-        )}
-      </div>
-    </main>
+          <Button type="submit" variant="primary" disabled={isSubmitting} className="w-full">
+            {isSubmitting ? "Updating…" : "Update password"}
+          </Button>
+        </form>
+      )}
+    </GlassCard>
   );
 }

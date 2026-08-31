@@ -3,8 +3,18 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { isAxiosError } from "axios";
 
+import { AuthHeader } from "../components/AuthHeader";
 import { Footer } from "../components/Footer";
+import { Button } from "../components/ui/Button";
+import { GlassCard } from "../components/ui/GlassCard";
+import { FIELD_INPUT, FIELD_LABEL } from "../lib/formStyles";
 import { useAuth } from "../lib/auth";
+
+// Purely cosmetic strength cue derived from length — real enforcement
+// (min 8 chars) is server-side (Pydantic) and via the input's minLength.
+function passwordBarColor(len: number, threshold: number, color: string): string {
+  return len >= threshold ? color : "rgba(19,26,58,0.1)";
+}
 
 export function Signup() {
   const { signup } = useAuth();
@@ -34,84 +44,109 @@ export function Signup() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-gray-50">
-      <main className="flex flex-1 items-center justify-center px-4">
-        <div className="w-full max-w-sm space-y-6">
-          <h1 className="text-center text-2xl font-semibold text-gray-900">Create your account</h1>
+    <div className="flex min-h-screen flex-col">
+      <AuthHeader />
+      <main className="flex flex-1 items-center justify-center px-4 pb-10 pt-2">
+        <div className="w-full max-w-[440px] animate-rise">
+          <GlassCard variant="auth" className="p-8 sm:p-9">
+            <h1 className="text-[23px] font-bold tracking-tight text-ink-900">
+              Create your account
+            </h1>
+            <p className="mb-6 mt-1.5 text-sm leading-relaxed text-ink-600">
+              Free while you log your first 50 receipts.
+            </p>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label htmlFor="fullName" className="block text-sm font-medium text-gray-700">
-                Full name <span className="font-normal text-gray-500">(optional)</span>
-              </label>
-              <input
-                id="fullName"
-                type="text"
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 focus:border-gray-500 focus:outline-none"
-              />
-            </div>
+            {error && (
+              <div className="mb-4 flex items-start gap-2.5 rounded-2xl border border-rose-600/[0.24] bg-rose-600/[0.08] px-3.5 py-2.5">
+                <span className="mt-1.5 h-[7px] w-[7px] flex-none rounded-full bg-rose-600" />
+                <p className="text-[13px] font-medium leading-relaxed text-rose-800">{error}</p>
+              </div>
+            )}
 
-            <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700">
-                Email
-              </label>
-              <input
-                id="email"
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 focus:border-gray-500 focus:outline-none"
-              />
-            </div>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label htmlFor="fullName" className={FIELD_LABEL}>
+                  Full name <span className="font-normal text-ink-600">(optional)</span>
+                </label>
+                <input
+                  id="fullName"
+                  type="text"
+                  placeholder="Alex Nguyen"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  className={FIELD_INPUT}
+                />
+              </div>
 
-            <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700">
-                Password
-              </label>
-              <input
-                id="password"
-                type="password"
-                required
-                minLength={8}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 focus:border-gray-500 focus:outline-none"
-              />
-              <p className="mt-1 text-xs text-gray-500">At least 8 characters.</p>
-            </div>
+              <div>
+                <label htmlFor="email" className={FIELD_LABEL}>
+                  Email
+                </label>
+                <input
+                  id="email"
+                  type="email"
+                  required
+                  placeholder="you@company.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className={FIELD_INPUT}
+                />
+              </div>
 
-            {error && <p className="text-sm text-red-600">{error}</p>}
+              <div>
+                <label htmlFor="password" className={FIELD_LABEL}>
+                  Password
+                </label>
+                <input
+                  id="password"
+                  type="password"
+                  required
+                  minLength={8}
+                  placeholder="At least 8 characters"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className={FIELD_INPUT}
+                />
+                <div className="mt-1.5 flex gap-1.5">
+                  <div
+                    className="h-1 flex-1 rounded-full"
+                    style={{ background: passwordBarColor(password.length, 1, "#f59e0b") }}
+                  />
+                  <div
+                    className="h-1 flex-1 rounded-full"
+                    style={{ background: passwordBarColor(password.length, 8, "#2f6bf6") }}
+                  />
+                  <div
+                    className="h-1 flex-1 rounded-full"
+                    style={{ background: passwordBarColor(password.length, 12, "#059669") }}
+                  />
+                </div>
+              </div>
 
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="w-full rounded-md bg-gray-900 px-3 py-2 text-white hover:bg-gray-800 disabled:opacity-50"
-            >
-              {isSubmitting ? "Creating account…" : "Sign up"}
-            </button>
-          </form>
+              <Button type="submit" variant="primary" disabled={isSubmitting} className="w-full">
+                {isSubmitting ? "Creating account…" : "Create account"}
+              </Button>
+            </form>
 
-          <p className="text-center text-xs text-gray-600">
-            By signing up, you agree to our{" "}
-            <Link to="/terms" className="hover:underline">
-              Terms of Service
-            </Link>{" "}
-            and{" "}
-            <Link to="/privacy" className="hover:underline">
-              Privacy Policy
-            </Link>
-            , including that uploaded receipts are sent to OpenAI for extraction.
-          </p>
+            <p className="mt-5 text-center text-xs leading-relaxed text-ink-600">
+              By signing up, you agree to our{" "}
+              <Link to="/terms" className="font-medium text-brand-blue hover:underline">
+                Terms of Service
+              </Link>{" "}
+              and{" "}
+              <Link to="/privacy" className="font-medium text-brand-blue hover:underline">
+                Privacy Policy
+              </Link>
+              , including that uploaded receipts are sent to OpenAI for extraction.
+            </p>
 
-          <p className="text-center text-sm text-gray-500">
-            Already have an account?{" "}
-            <Link to="/login" className="hover:underline">
-              Log in
-            </Link>
-          </p>
+            <p className="mt-4 text-center text-sm text-ink-600">
+              Already have an account?{" "}
+              <Link to="/login" className="font-semibold text-brand-blue hover:underline">
+                Log in
+              </Link>
+            </p>
+          </GlassCard>
         </div>
       </main>
       <Footer />

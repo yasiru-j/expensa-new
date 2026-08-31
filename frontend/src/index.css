@@ -1,3 +1,36 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-[#eef1f8] font-sans text-ink-900 antialiased;
+  }
+  input:focus {
+    outline: none;
+    border-color: rgba(59, 60, 224, 0.55);
+    box-shadow: 0 0 0 4px rgba(59, 60, 224, 0.12);
+  }
+  ::placeholder {
+    color: #98a0bd;
+  }
+}
+
+/* Fixed background layers behind every route — see App.tsx. Two separate
+   elements (not one shorthand) because the grid overlay needs its own
+   opacity independent of the gradient layer beneath it. */
+.app-glow {
+  background:
+    radial-gradient(900px 620px at 12% -8%, rgba(59, 130, 246, 0.3), transparent 60%),
+    radial-gradient(820px 560px at 88% 4%, rgba(79, 63, 224, 0.26), transparent 62%),
+    radial-gradient(760px 700px at 70% 96%, rgba(99, 102, 241, 0.18), transparent 60%),
+    linear-gradient(180deg, #f7f9ff 0%, #eaeefa 100%);
+}
+
+.app-grid {
+  opacity: 0.5;
+  background-image:
+    linear-gradient(rgba(19, 26, 58, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(19, 26, 58, 0.035) 1px, transparent 1px);
+  background-size: 64px 64px;
+}

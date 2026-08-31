@@ -29,3 +29,6 @@ frontend/*.tsbuildinfo
 
 # Docker
 docker-compose.override.yml
+
+# Claude Design source (mockup + assets) — not app code, kept locally only
+Design\ /

@@ -1,5 +1,7 @@
 import { useCallback, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 
+import { GlassCard } from "./ui/GlassCard";
+
 const ACCEPTED_TYPES = ["image/jpeg", "image/png", "application/pdf"];
 const MAX_SIZE_BYTES = Number(import.meta.env.VITE_MAX_UPLOAD_SIZE_BYTES) || 10 * 1024 * 1024;
 const MAX_SIZE_MB = Math.floor(MAX_SIZE_BYTES / (1024 * 1024));
@@ -46,7 +48,7 @@ export function UploadDropzone({ onFileSelected, disabled = false }: UploadDropz
   }
 
   return (
-    <div className="space-y-2">
+    <GlassCard className="flex h-full flex-col gap-2.5 p-3.5">
       {/* No nested <button> in here (a11y: interactive controls must not be
           nested) — "Take a photo" lives outside this role="button" area. */}
       <div
@@ -66,14 +68,21 @@ export function UploadDropzone({ onFileSelected, disabled = false }: UploadDropz
         role="button"
         tabIndex={0}
         aria-label="Upload a receipt: drag and drop, or click to browse"
-        className={`flex cursor-pointer flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed p-10 text-center transition-colors ${
-          isDragging ? "border-gray-900 bg-gray-50" : "border-gray-300"
+        className={`flex min-h-[150px] flex-1 cursor-pointer flex-col items-center justify-center gap-2.5 rounded-2xl border-[1.5px] border-dashed p-5 text-center transition-colors ${
+          isDragging
+            ? "border-brand-blue/65 bg-brand-blue/10"
+            : "border-brand-blue/40 bg-brand-blue/5 hover:border-brand-blue/65 hover:bg-brand-blue/10"
         } ${disabled ? "pointer-events-none opacity-50" : ""}`}
       >
-        <p className="text-gray-700">
-          <span className="font-medium">Drag and drop</span> a receipt, or click to browse
+        <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-gradient text-lg font-semibold text-white shadow-brand">
+          +
+        </span>
+        <p className="text-[15px] font-semibold text-ink-900">
+          Drop a receipt here, or click to browse
         </p>
-        <p className="text-xs text-gray-600">JPEG, PNG, or a single-page PDF — up to {MAX_SIZE_MB}MB</p>
+        <p className="text-xs text-ink-600">
+          JPEG, PNG, or a single-page PDF — up to {MAX_SIZE_MB}MB
+        </p>
       </div>
 
       <div className="flex justify-center">
@@ -81,7 +90,7 @@ export function UploadDropzone({ onFileSelected, disabled = false }: UploadDropz
           type="button"
           onClick={() => cameraInputRef.current?.click()}
           disabled={disabled}
-          className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-50"
+          className="rounded-lg border border-ink-900/10 bg-white/70 px-3 py-1.5 text-sm font-medium text-ink-900 hover:bg-white disabled:opacity-50"
         >
           Take a photo
         </button>
@@ -107,7 +116,7 @@ export function UploadDropzone({ onFileSelected, disabled = false }: UploadDropz
         disabled={disabled}
       />
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
-    </div>
+      {error && <p className="text-center text-sm text-rose-600">{error}</p>}
+    </GlassCard>
   );
 }

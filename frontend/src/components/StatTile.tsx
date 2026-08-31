@@ -5,9 +5,9 @@ interface StatTileProps {
 
 export function StatTile({ label, value }: StatTileProps) {
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4">
-      <p className="text-sm text-gray-500">{label}</p>
-      <p className="mt-1 text-2xl font-semibold text-gray-900">{value}</p>
+    <div className="rounded-[22px] border border-white/80 bg-white/[0.62] p-5 shadow-glass">
+      <p className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-ink-600">{label}</p>
+      <p className="mt-2.5 text-[26px] font-bold tracking-tight text-ink-900">{value}</p>
     </div>
   );
 }

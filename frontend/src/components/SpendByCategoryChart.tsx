@@ -1,15 +1,7 @@
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  LabelList,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { Cell, Pie, PieChart, Tooltip } from "recharts";
 
-import { CHART_COLORS } from "../lib/chartTokens";
+import { GlassCard } from "./ui/GlassCard";
+import { formatMoney, formatMoneyShort } from "../lib/money";
 import type { CategoryBreakdown } from "../lib/expenses";
 
 interface SpendByCategoryChartProps {
@@ -17,60 +9,87 @@ interface SpendByCategoryChartProps {
   currency: string;
 }
 
+const PALETTE = ["#2f6bf6", "#4b32e0", "#7c5cf6", "#9aa8f7", "#c3cbf9"];
+
 export function SpendByCategoryChart({ data, currency }: SpendByCategoryChartProps) {
-  const bars = data
+  const slices = data
     .filter((row) => row.currency === currency)
-    .map((row) => ({ category: row.category, total: Number(row.total) }))
+    .map((row, i) => ({
+      category: row.category,
+      total: Number(row.total),
+      color: PALETTE[i % PALETTE.length],
+    }))
     .sort((a, b) => b.total - a.total);
 
-  const height = Math.max(160, bars.length * 36 + 32);
+  const grandTotal = slices.reduce((sum, s) => sum + s.total, 0);
 
   return (
-    <div>
-      <h2 className="mb-2 text-sm font-medium text-gray-700">Spend by category ({currency})</h2>
-      {bars.length === 0 ? (
-        <div className="flex h-40 items-center justify-center rounded-lg border border-dashed border-gray-300 text-gray-600">
-          No confirmed spending yet.
+    <GlassCard className="p-5">
+      <div className="text-[15.5px] font-bold tracking-tight text-ink-900">Spend by category</div>
+      <div className="mt-1 text-xs text-ink-600">{currency}</div>
+
+      {slices.length === 0 ? (
+        <div className="mt-5 flex h-[190px] items-center justify-center rounded-2xl border border-dashed border-ink-900/[0.14] p-5 text-center">
+          <div className="max-w-[240px] text-xs leading-relaxed text-ink-600">
+            Categories appear once your first receipt is confirmed.
+          </div>
         </div>
       ) : (
-        <ResponsiveContainer width="100%" height={height}>
-          <BarChart data={bars} layout="vertical" margin={{ top: 8, right: 48, bottom: 0, left: 8 }}>
-            <CartesianGrid stroke={CHART_COLORS.gridline} horizontal={false} />
-            <XAxis
-              type="number"
-              tickLine={false}
-              axisLine={false}
-              tick={{ fill: CHART_COLORS.muted, fontSize: 12 }}
-            />
-            <YAxis
-              type="category"
-              dataKey="category"
-              tickLine={false}
-              axisLine={false}
-              width={120}
-              tick={{ fill: CHART_COLORS.textPrimary, fontSize: 12 }}
-            />
-            <Tooltip
-              contentStyle={{
-                background: CHART_COLORS.surface,
-                border: `1px solid ${CHART_COLORS.gridline}`,
-                borderRadius: 6,
-                fontSize: 12,
-              }}
-              itemStyle={{ color: CHART_COLORS.textPrimary }}
-              formatter={(value: number) => [`${value.toFixed(2)} ${currency}`, "Spend"]}
-            />
-            <Bar dataKey="total" fill={CHART_COLORS.primary} radius={[0, 4, 4, 0]} maxBarSize={24}>
-              <LabelList
+        <div className="mt-4 flex items-center gap-5">
+          <div className="relative h-[132px] w-[132px] flex-none">
+            <PieChart width={132} height={132}>
+              <Pie
+                data={slices}
                 dataKey="total"
-                position="right"
-                formatter={(value: number) => value.toFixed(2)}
-                style={{ fill: CHART_COLORS.textPrimary, fontSize: 12 }}
+                nameKey="category"
+                cx={66}
+                cy={66}
+                innerRadius={41}
+                outerRadius={66}
+                stroke="none"
+                startAngle={90}
+                endAngle={-270}
+              >
+                {slices.map((s) => (
+                  <Cell key={s.category} fill={s.color} />
+                ))}
+              </Pie>
+              <Tooltip
+                contentStyle={{
+                  background: "#fff",
+                  border: "1px solid rgba(19,26,58,0.08)",
+                  borderRadius: 10,
+                  fontSize: 12,
+                }}
+                formatter={(value: number, _name, entry) => [
+                  formatMoney(value, currency),
+                  entry.payload.category as string,
+                ]}
               />
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
+            </PieChart>
+            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+              <div className="text-[19px] font-bold tracking-tight text-ink-900">
+                {formatMoneyShort(grandTotal, currency)}
+              </div>
+              <div className="text-[10.5px] text-ink-600">total</div>
+            </div>
+          </div>
+
+          <div className="flex flex-1 flex-col gap-2.5">
+            {slices.map((s) => (
+              <div key={s.category} className="flex items-center gap-2">
+                <span className="h-2 w-2 flex-none rounded-[3px]" style={{ background: s.color }} />
+                <span className="flex-1 truncate text-sm font-medium text-ink-900">
+                  {s.category}
+                </span>
+                <span className="font-mono text-xs text-ink-600">
+                  {formatMoney(s.total, currency)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
-    </div>
+    </GlassCard>
   );
 }

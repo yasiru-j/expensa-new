@@ -1,5 +1,12 @@
+import { formatMoney } from "../lib/money";
 import type { ExpenseListItem, SortOption } from "../lib/expenses";
+import { GlassCard } from "./ui/GlassCard";
+import { Pill } from "./ui/Pill";
 import { StatusBadge } from "./StatusBadge";
+
+function formatAmount(total: string | null, currency: string | null): string {
+  return total === null ? "—" : formatMoney(total, currency);
+}
 
 interface ExpensesTableProps {
   items: ExpenseListItem[];
@@ -13,17 +20,12 @@ interface ExpensesTableProps {
   onRowClick: (id: string) => void;
 }
 
-function formatAmount(total: string | null, currency: string | null): string {
-  if (total === null) return "—";
-  const amount = Number(total);
-  try {
-    return new Intl.NumberFormat(undefined, {
-      style: "currency",
-      currency: currency ?? "AUD",
-    }).format(amount);
-  } catch {
-    return `${amount.toFixed(2)} ${currency ?? ""}`.trim();
-  }
+function DuplicateBadge() {
+  return (
+    <Pill tone="warning" dot={false} className="whitespace-nowrap">
+      Possible duplicate
+    </Pill>
+  );
 }
 
 export function ExpensesTable({
@@ -40,47 +42,118 @@ export function ExpensesTable({
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-gray-900">Expenses</h2>
-        <label htmlFor="expenses-sort" className="sr-only">
-          Sort expenses
-        </label>
-        <select
-          id="expenses-sort"
-          value={sort}
-          onChange={(e) => onSortChange(e.target.value as SortOption)}
-          className="rounded-md border border-gray-300 px-2 py-1 text-sm text-gray-700"
-        >
-          <option value="date_desc">Date (newest)</option>
-          <option value="date_asc">Date (oldest)</option>
-          <option value="created_desc">Uploaded (newest)</option>
-          <option value="created_asc">Uploaded (oldest)</option>
-        </select>
+    <GlassCard className="p-5">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-[15.5px] font-bold tracking-tight text-ink-900">Expenses</div>
+          <div className="mt-0.5 text-xs text-ink-600">
+            {total} expense{total === 1 ? "" : "s"}
+          </div>
+        </div>
+        <div>
+          <label htmlFor="expenses-sort" className="sr-only">
+            Sort expenses
+          </label>
+          <select
+            id="expenses-sort"
+            value={sort}
+            onChange={(e) => onSortChange(e.target.value as SortOption)}
+            className="rounded-[10px] border border-ink-900/10 bg-white/70 px-2.5 py-1.5 text-sm text-ink-900"
+          >
+            <option value="date_desc">Date (newest)</option>
+            <option value="date_asc">Date (oldest)</option>
+            <option value="created_desc">Uploaded (newest)</option>
+            <option value="created_asc">Uploaded (oldest)</option>
+          </select>
+        </div>
       </div>
 
       {isLoading ? (
-        <div className="rounded-lg border border-gray-200 p-10 text-center text-gray-600">Loading…</div>
+        <div className="flex flex-col gap-2">
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <div key={i} className="h-12 animate-pulse rounded-xl bg-ink-900/5" />
+          ))}
+        </div>
       ) : items.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-gray-300 p-10 text-center text-gray-600">
-          No expenses yet — upload a receipt above to get started.
+        <div className="flex flex-col items-center gap-2.5 rounded-2xl border border-dashed border-ink-900/[0.14] px-6 py-12 text-center">
+          <span className="flex h-[42px] w-[42px] items-center justify-center rounded-2xl bg-brand-blue/10 text-xl font-semibold text-brand-blue">
+            +
+          </span>
+          <div className="text-base font-bold text-ink-900">No expenses yet</div>
+          <p className="max-w-[360px] text-sm leading-relaxed text-ink-600">
+            Upload a receipt and Expensa pulls out the vendor, date, total, and line items for you
+            to confirm.
+          </p>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-gray-200">
-          <table className="min-w-full divide-y divide-gray-200 text-sm">
-            <thead className="bg-gray-50 text-left text-xs uppercase text-gray-500">
-              <tr>
-                <th className="px-4 py-2 font-medium">Vendor</th>
-                <th className="px-4 py-2 font-medium">Date</th>
-                <th className="px-4 py-2 font-medium">Total</th>
-                <th className="px-4 py-2 font-medium">Category</th>
-                <th className="px-4 py-2 font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100 bg-white">
-              {items.map((item) => (
-                <tr
-                  key={item.id}
+        <>
+          {/* Desktop / tablet: a real table (keyboard nav + AT semantics from
+              the a11y pass stay intact). Below `md` this is hidden in favor
+              of the stacked card list — a fixed-column table has no good
+              mobile rendering, and the design brief asked for real
+              responsiveness rather than horizontal scroll. */}
+          <div className="hidden overflow-x-auto md:block">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-ink-900/[0.08] text-left font-mono text-[10.5px] uppercase tracking-[0.1em] text-ink-600">
+                  <th className="px-3 pb-2.5 font-medium">Vendor</th>
+                  <th className="px-3 pb-2.5 font-medium">Date</th>
+                  <th className="px-3 pb-2.5 font-medium">Category</th>
+                  <th className="px-3 pb-2.5 text-right font-medium">Amount</th>
+                  <th className="px-3 pb-2.5 font-medium">Status</th>
+                  <th className="px-3 pb-2.5" />
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((item) => (
+                  <tr
+                    key={item.id}
+                    onClick={() => onRowClick(item.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        onRowClick(item.id);
+                      }
+                    }}
+                    tabIndex={0}
+                    aria-label={`View details for ${item.vendor ?? "expense"} on ${item.expense_date ?? "unknown date"}`}
+                    className="cursor-pointer rounded-xl border-b border-ink-900/[0.055] transition hover:bg-white/75 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-blue/50"
+                  >
+                    <td className="px-3 py-3">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-ink-900">{item.vendor ?? "—"}</span>
+                        {item.is_potential_duplicate && <DuplicateBadge />}
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 font-mono text-[12.5px] text-ink-600">
+                      {item.expense_date ?? "—"}
+                    </td>
+                    <td className="px-3 py-3">
+                      {item.category && (
+                        <span className="inline-block rounded-full bg-ink-900/[0.055] px-2.5 py-1 text-xs font-medium text-ink-600">
+                          {item.category}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-3 text-right font-mono text-[13px] font-medium text-ink-900">
+                      {formatAmount(item.total, item.currency)}
+                    </td>
+                    <td className="px-3 py-3">
+                      <StatusBadge status={item.status} />
+                    </td>
+                    <td className="px-3 py-3 text-right text-ink-300">→</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Mobile: stacked cards. */}
+          <ul className="flex flex-col gap-2 md:hidden">
+            {items.map((item) => (
+              <li key={item.id}>
+                <div
+                  role="button"
                   onClick={() => onRowClick(item.id)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
@@ -90,55 +163,54 @@ export function ExpensesTable({
                   }}
                   tabIndex={0}
                   aria-label={`View details for ${item.vendor ?? "expense"} on ${item.expense_date ?? "unknown date"}`}
-                  className="cursor-pointer hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-gray-400"
+                  className="flex cursor-pointer flex-col gap-1.5 rounded-2xl border border-ink-900/[0.07] bg-white/70 p-3.5 focus:outline-none focus:ring-2 focus:ring-brand-blue/50"
                 >
-                  <td className="px-4 py-2 text-gray-900">
-                    <div className="flex items-center gap-2">
-                      {item.vendor ?? "—"}
-                      {item.is_potential_duplicate && (
-                        <span
-                          title="Another expense has the same vendor, date, and total"
-                          className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700"
-                        >
-                          Possible duplicate
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-4 py-2 text-gray-600">{item.expense_date ?? "—"}</td>
-                  <td className="px-4 py-2 text-gray-900">{formatAmount(item.total, item.currency)}</td>
-                  <td className="px-4 py-2 text-gray-600">{item.category ?? "—"}</td>
-                  <td className="px-4 py-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="font-semibold text-ink-900">{item.vendor ?? "—"}</span>
+                    <span className="font-mono text-sm font-medium text-ink-900">
+                      {formatAmount(item.total, item.currency)}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="font-mono text-xs text-ink-600">
+                      {item.expense_date ?? "—"}
+                    </span>
+                    {item.category && (
+                      <span className="rounded-full bg-ink-900/[0.055] px-2 py-0.5 text-[11px] font-medium text-ink-600">
+                        {item.category}
+                      </span>
+                    )}
                     <StatusBadge status={item.status} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+                    {item.is_potential_duplicate && <DuplicateBadge />}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
 
-      {total > pageSize && (
-        <div className="flex items-center justify-between text-sm text-gray-600">
-          <button
-            onClick={() => onPageChange(page - 1)}
-            disabled={page <= 1}
-            className="rounded-md border border-gray-300 px-3 py-1 disabled:opacity-40"
-          >
-            Previous
-          </button>
-          <span>
-            Page {page} of {totalPages}
-          </span>
-          <button
-            onClick={() => onPageChange(page + 1)}
-            disabled={page >= totalPages}
-            className="rounded-md border border-gray-300 px-3 py-1 disabled:opacity-40"
-          >
-            Next
-          </button>
-        </div>
+          {total > pageSize && (
+            <div className="mt-4 flex items-center justify-between text-sm text-ink-600">
+              <button
+                onClick={() => onPageChange(page - 1)}
+                disabled={page <= 1}
+                className="rounded-[10px] border border-ink-900/10 bg-white/70 px-3 py-1.5 font-medium disabled:opacity-40"
+              >
+                Previous
+              </button>
+              <span>
+                Page {page} of {totalPages}
+              </span>
+              <button
+                onClick={() => onPageChange(page + 1)}
+                disabled={page >= totalPages}
+                className="rounded-[10px] border border-ink-900/10 bg-white/70 px-3 py-1.5 font-medium disabled:opacity-40"
+              >
+                Next
+              </button>
+            </div>
+          )}
+        </>
       )}
-    </div>
+    </GlassCard>
   );
 }

@@ -6,7 +6,9 @@ import { ExpenseDetailModal } from "../components/ExpenseDetailModal";
 import { ExpensesFilterBar } from "../components/ExpensesFilterBar";
 import { ExpensesTable } from "../components/ExpensesTable";
 import { ExportControls } from "../components/ExportControls";
+import { GlassCard } from "../components/ui/GlassCard";
 import { UploadDropzone } from "../components/UploadDropzone";
+import { useAuth } from "../lib/auth";
 import {
   getDashboardSummary,
   getExpense,
@@ -17,6 +19,7 @@ import {
   type ExpenseListItem,
   type SortOption,
 } from "../lib/expenses";
+import { firstNameFor } from "../lib/initials";
 
 const PAGE_SIZE = 20;
 // Only a multi-page PDF (dispatched to the async worker) ever comes back
@@ -24,7 +27,15 @@ const PAGE_SIZE = 20;
 // processed inline and returns "ready"/"failed" immediately, no polling.
 const POLL_INTERVAL_MS = 3000;
 
+function greeting(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
+}
+
 export function Dashboard() {
+  const { user } = useAuth();
   const [items, setItems] = useState<ExpenseListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -133,7 +144,10 @@ export function Dashboard() {
     } catch (err) {
       if (isAxiosError(err) && err.response?.status === 413) {
         setUploadError("That file is too large.");
-      } else if (isAxiosError(err) && (err.response?.status === 400 || err.response?.status === 429)) {
+      } else if (
+        isAxiosError(err) &&
+        (err.response?.status === 400 || err.response?.status === 429)
+      ) {
         // 429 covers both the per-hour rate limit and the monthly quota —
         // the backend's message already distinguishes which one fired.
         const detail = err.response.data as { detail?: string } | undefined;
@@ -153,56 +167,98 @@ export function Dashboard() {
     void refreshSummary();
   }
 
+  const monthLabel = new Date().toLocaleDateString(undefined, { month: "long", year: "numeric" });
+
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-semibold text-gray-900">Dashboard</h1>
-        <DashboardSummarySection summary={summary} isLoading={isSummaryLoading} />
-      </div>
-
-      <div>
-        <h2 className="text-lg font-semibold text-gray-900">Upload a receipt</h2>
-        <p className="mt-1 text-gray-600">JPEG, PNG, or a single-page PDF.</p>
-        <div className="mt-4">
-          <UploadDropzone onFileSelected={handleFileSelected} disabled={isUploading} />
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <div className="font-mono text-[11px] uppercase tracking-[0.14em] text-ink-600">
+            {monthLabel}
+          </div>
+          <h1 className="mt-1 text-[28px] font-bold tracking-tight text-ink-900 sm:text-[31px]">
+            {greeting()}
+            {user ? `, ${firstNameFor(user.full_name, user.email)}` : ""}
+          </h1>
         </div>
-        {isUploading && <p className="mt-2 text-sm text-gray-500">Uploading and extracting…</p>}
-        {processingCount > 0 && (
-          <p className="mt-2 text-sm text-gray-500" role="status">
-            {processingCount === 1
-              ? "Processing a multi-page PDF in the background — this can take a moment."
-              : `Processing ${processingCount} multi-page PDFs in the background — this can take a moment.`}
-          </p>
-        )}
-        {uploadError && <p className="mt-2 text-sm text-red-600">{uploadError}</p>}
       </div>
 
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <ExpensesFilterBar
-            filters={filters}
-            onChange={(next) => {
-              setFilters(next);
+      {processingCount > 0 && (
+        <div
+          role="status"
+          className="flex items-center gap-3 rounded-2xl border border-brand-blue/25 bg-brand-blue/[0.09] px-4 py-3"
+        >
+          <span className="h-[15px] w-[15px] flex-none animate-spin rounded-full border-2 border-brand-blue/25 border-t-brand-blue" />
+          <p className="text-[13.5px] font-medium text-blue-900">
+            {processingCount === 1
+              ? "Processing a multi-page PDF in the background. You can keep working — we'll add it to the table when it finishes."
+              : `Processing ${processingCount} multi-page PDFs in the background. You can keep working — we'll add them to the table when they finish.`}
+          </p>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-12">
+        <DashboardSummarySection
+          summary={summary}
+          isLoading={isSummaryLoading}
+          tableTotal={total}
+          uploadSlot={
+            isUploading ? (
+              <GlassCard className="flex h-full min-h-[150px] flex-col items-center justify-center gap-3 p-5 text-center">
+                <span className="h-[26px] w-[26px] animate-spin rounded-full border-[2.5px] border-brand-blue/20 border-t-brand-blue" />
+                <div className="text-[15px] font-semibold text-ink-900">
+                  Uploading and extracting…
+                </div>
+              </GlassCard>
+            ) : uploadError ? (
+              <GlassCard className="flex h-full min-h-[150px] flex-col items-center justify-center gap-2.5 border-rose-600/20 bg-rose-600/[0.06] p-5 text-center">
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-600/[0.12] text-lg font-bold text-rose-600">
+                  !
+                </span>
+                <div className="text-[15px] font-semibold text-rose-800">
+                  We couldn&rsquo;t read that receipt
+                </div>
+                <p className="max-w-[330px] text-xs leading-relaxed text-ink-600">{uploadError}</p>
+                <button
+                  onClick={() => setUploadError(null)}
+                  className="mt-1 h-8 rounded-[10px] bg-brand-gradient px-3.5 text-xs font-semibold text-white shadow-brand"
+                >
+                  Try again
+                </button>
+              </GlassCard>
+            ) : (
+              <UploadDropzone onFileSelected={handleFileSelected} disabled={isUploading} />
+            )
+          }
+        />
+
+        <div className="col-span-1 sm:col-span-2 lg:col-span-12">
+          <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+            <ExpensesFilterBar
+              filters={filters}
+              onChange={(next) => {
+                setFilters(next);
+                setPage(1);
+              }}
+            />
+            <ExportControls filters={filters} sort={sort} />
+          </div>
+
+          <ExpensesTable
+            items={items}
+            isLoading={isLoading}
+            sort={sort}
+            onSortChange={(next) => {
+              setSort(next);
               setPage(1);
             }}
+            page={page}
+            pageSize={PAGE_SIZE}
+            total={total}
+            onPageChange={setPage}
+            onRowClick={setSelectedExpenseId}
           />
-          <ExportControls filters={filters} sort={sort} />
         </div>
-
-        <ExpensesTable
-          items={items}
-          isLoading={isLoading}
-          sort={sort}
-          onSortChange={(next) => {
-            setSort(next);
-            setPage(1);
-          }}
-          page={page}
-          pageSize={PAGE_SIZE}
-          total={total}
-          onPageChange={setPage}
-          onRowClick={setSelectedExpenseId}
-        />
       </div>
 
       {selectedExpenseId && (
